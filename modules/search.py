@@ -72,8 +72,52 @@ def _parse_result(el: ET.Element) -> BidListing:
     )
 
 
+# XML 1.0で許可されない制御文字(タブ・改行・復帰は除く)
+_INVALID_XML_CHARS = re.compile(rb"[\x00-\x08\x0B\x0C\x0E-\x1F]")
+# 定義済み実体・数値文字参照に続かない裸の「&」(公告文中の「A&B社」等)
+_BARE_AMPERSAND = re.compile(rb"&(?!(?:amp|lt|gt|apos|quot|#[0-9]+|#x[0-9A-Fa-f]+);)")
+
+
+def _clean_xml_bytes(xml_bytes: bytes) -> bytes:
+    """実データXMLに混入しがちな不正トークンを除去・エスケープする。
+
+    kkj.go.jp APIは各機関の公告文をそのままProjectDescription等に埋め込むため、
+    エスケープされていない「&」やXML 1.0非許容の制御文字が混入することがある
+    (実データE2Eで line 6640 の invalid token として観測済み)。
+    """
+    cleaned = _INVALID_XML_CHARS.sub(b"", xml_bytes)
+    cleaned = _BARE_AMPERSAND.sub(b"&amp;", cleaned)
+    return cleaned
+
+
+def parse_xml_root(xml_bytes: bytes) -> ET.Element:
+    """APIレスポンスを寛容にパースしてルート要素を返す。
+
+    1. まず素のElementTreeで試す(正常なレスポンスは追加コストなし)
+    2. 失敗したらクレンジング後に再試行
+    3. それでも失敗したらlxmlのrecoverモード(壊れた箇所を捨てて継続)で救済
+    """
+    try:
+        return ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        pass
+
+    cleaned = _clean_xml_bytes(xml_bytes)
+    try:
+        return ET.fromstring(cleaned)
+    except ET.ParseError as strict_error:
+        from lxml import etree
+
+        root = etree.fromstring(cleaned, parser=etree.XMLParser(recover=True))
+        if root is None:
+            raise RuntimeError(
+                f"kkj.go.jp APIレスポンスをXMLとして解釈できませんでした: {strict_error}"
+            ) from strict_error
+        return root
+
+
 def _parse_response(xml_bytes: bytes) -> list[BidListing]:
-    root = ET.fromstring(xml_bytes)
+    root = parse_xml_root(xml_bytes)
     error = root.find("Error")
     if error is not None:
         raise RuntimeError(f"kkj.go.jp API がエラーを返しました: {error.text}")

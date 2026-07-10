@@ -54,6 +54,53 @@ def test_parse_response_raises_on_error_xml():
         _parse_response(_ERROR_XML.encode("utf-8"))
 
 
+def _wrap_result(inner: str) -> bytes:
+    return (
+        "<Results><Version>1.0</Version><SearchResults><SearchHits>1</SearchHits>"
+        f"<SearchResult><ResultId>1</ResultId><Key>k1</Key>{inner}</SearchResult>"
+        "</SearchResults></Results>"
+    ).encode("utf-8")
+
+
+def test_parse_response_tolerates_bare_ampersand():
+    """実データE2Eで観測した invalid token の回帰テスト(2026-07-10)。
+
+    公告文中のエスケープされていない「&」でクラッシュせず、テキストとして
+    「&」を保持したままパースできること。
+    """
+    xml = _wrap_result("<ProjectName>A&B商事向け物品購入</ProjectName>")
+    listings = _parse_response(xml)
+    assert listings[0].project_name == "A&B商事向け物品購入"
+
+
+def test_parse_response_does_not_double_escape_valid_entities():
+    xml = _wrap_result("<ProjectName>A&amp;B &lt;第2期&gt; &#12354;</ProjectName>")
+    listings = _parse_response(xml)
+    assert listings[0].project_name == "A&B <第2期> あ"
+
+
+def test_parse_response_strips_invalid_control_chars():
+    xml = _wrap_result("<ProjectName>消耗品\x00の\x0b購入\x1f</ProjectName>")
+    listings = _parse_response(xml)
+    assert listings[0].project_name == "消耗品の購入"
+
+
+def test_parse_response_lxml_recover_fallback_survives_unescaped_lt():
+    """クレンジングでは直せない壊れ方(裸の「<」)でも例外にせず、救済できた
+    範囲で結果を返すこと(lxml recoverモードのフォールバック)。"""
+    xml = _wrap_result("<ProjectName>単価 100円 <税抜> の物品</ProjectName>")
+    listings = _parse_response(xml)  # 例外を投げないことが本質
+    assert len(listings) == 1
+    assert listings[0].project_name.startswith("単価 100円")
+
+
+def test_parse_response_totally_broken_input_raises():
+    # XMLの体をなしていない入力は救済せずエラーにする(main.py側で
+    # 「案件探索全体の失敗」として実行ログに記録される)
+    with pytest.raises(Exception):
+        _parse_response(b"")
+
+
 def test_fetch_candidate_pool_calls_api_with_combined_params(monkeypatch, settings):
     from modules.models import Customer, CustomerProfile
 

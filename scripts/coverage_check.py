@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import csv
 import sys
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import requests
@@ -23,6 +22,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from modules.config import load_settings  # noqa: E402
+from modules.search import parse_xml_root  # noqa: E402
 
 _CSV_PATH = Path(__file__).resolve().parent.parent / "config" / "past_bids_reference.csv"
 
@@ -54,7 +54,7 @@ def _query(settings, keyword: str, organization_name: str) -> tuple[int, list[st
         settings.search.api_base_url, params=params, timeout=settings.search.timeout_seconds
     )
     response.raise_for_status()
-    root = ET.fromstring(response.content)
+    root = parse_xml_root(response.content)
 
     error = root.find("Error")
     if error is not None:
