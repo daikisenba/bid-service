@@ -18,8 +18,8 @@ import gspread
 from .config import Settings
 from .models import Customer, CustomerError, MatchResult, SkipReason
 
-_RECOMMEND_TAB = "レコメンド案件"
-_RECOMMEND_HEADERS = [
+RECOMMEND_TAB = "レコメンド案件"
+RECOMMEND_HEADERS = [
     "案件名",
     "発注機関",
     "公告日",
@@ -30,7 +30,7 @@ _RECOMMEND_HEADERS = [
     "レコメンド理由",
     "ステータス",
 ]
-_URL_COLUMN = _RECOMMEND_HEADERS.index("案件URL") + 1
+_URL_COLUMN = RECOMMEND_HEADERS.index("案件URL") + 1
 
 _TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "recommend_mail.md"
 
@@ -51,7 +51,7 @@ def append_new_matches(
 ) -> list[MatchResult]:
     """マッチ結果を顧客専用シートに追記する。案件URLで重複チェックし、新規分のみ返す。"""
     sh = gc.open_by_key(customer.output_sheet_id)
-    ws = sh.worksheet(_RECOMMEND_TAB)
+    ws = sh.worksheet(RECOMMEND_TAB)
     existing = _existing_urls(ws)
 
     new_matches = [m for m in matches if m.listing.dedup_key not in existing]

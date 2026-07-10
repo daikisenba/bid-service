@@ -10,15 +10,11 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
-import os
 import sys
 from datetime import datetime, timezone
 
-import gspread
-from google.oauth2.service_account import Credentials
-
+from modules.auth import build_gspread_client, smtp_credentials
 from modules.customer import load_active_customers
 from modules.delivery import append_new_matches, send_recommend_email, write_admin_summary
 from modules.matching import match_customer
@@ -29,32 +25,12 @@ from modules.config import load_settings
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-
-
-def _build_gspread_client() -> gspread.Client:
-    raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-    if not raw:
-        raise RuntimeError("環境変数 GOOGLE_SERVICE_ACCOUNT_JSON が設定されていません")
-    creds = Credentials.from_service_account_info(json.loads(raw), scopes=_SCOPES)
-    return gspread.authorize(creds)
-
-
-def _smtp_credentials() -> tuple[str, str]:
-    user = os.environ.get("BID_SERVICE_SMTP_USER")
-    password = os.environ.get("BID_SERVICE_SMTP_PASSWORD")
-    if not user or not password:
-        raise RuntimeError(
-            "環境変数 BID_SERVICE_SMTP_USER / BID_SERVICE_SMTP_PASSWORD が設定されていません"
-        )
-    return user, password
-
 
 def run(settings_path: str = "config/settings.yaml") -> int:
     run_started_at = datetime.now(timezone.utc)
     settings = load_settings(settings_path)
-    gc = _build_gspread_client()
-    smtp_user, smtp_password = _smtp_credentials()
+    gc = build_gspread_client()
+    smtp_user, smtp_password = smtp_credentials()
 
     load_result = load_active_customers(gc, settings)
     customers = load_result.customers
