@@ -17,7 +17,10 @@ class FakeWorksheet:
     header: list[str]
     rows: list[list[object]] = field(default_factory=list)
 
-    def get_all_records(self) -> list[dict[str, object]]:
+    def get_all_records(self, numericise_ignore: list | None = None) -> list[dict[str, object]]:
+        if numericise_ignore == ["all"]:
+            # 本物のgspreadと同様、数値変換なし=全セル文字列で返す
+            return [dict(zip(self.header, [str(v) for v in row])) for row in self.rows]
         return [dict(zip(self.header, row)) for row in self.rows]
 
     def col_values(self, col: int) -> list[str]:

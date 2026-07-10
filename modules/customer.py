@@ -33,8 +33,15 @@ def load_active_customers(gc: gspread.Client, settings: Settings) -> CustomerLoa
     プロファイルが存在しない/不正/空の顧客はスキップし、理由を記録する。
     """
     sh = gc.open_by_key(settings.google.customer_master_sheet_id)
-    master_rows = sh.worksheet(settings.google.customer_master_tab).get_all_records()
-    profile_rows = sh.worksheet(settings.google.profile_tab).get_all_records()
+    # numericise_ignore=["all"]: gspreadの数値自動変換を無効化し全セルを文字列で
+    # 受け取る。変換を許すと「13,14,11,12」(都道府県コード)がint(13141112)に
+    # 潰れてカンマ位置が失われ、「01」(北海道)の先頭ゼロも欠落するため。
+    master_rows = sh.worksheet(settings.google.customer_master_tab).get_all_records(
+        numericise_ignore=["all"]
+    )
+    profile_rows = sh.worksheet(settings.google.profile_tab).get_all_records(
+        numericise_ignore=["all"]
+    )
 
     profiles_by_id: dict[str, dict[str, object]] = {}
     for row in profile_rows:

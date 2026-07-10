@@ -1,14 +1,32 @@
 """顧客マスタ・案件・マッチング結果の Pydantic モデル。"""
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+# 半角カンマのほか、シート手入力で紛れ込みやすい全角カンマ・読点も区切りとして扱う
+_CSV_SEPARATORS = re.compile(r"[,，、]")
+
 
 def _split_csv(value: object) -> object:
-    if isinstance(value, str):
-        return [item.strip() for item in value.split(",") if item.strip()]
+    """カンマ区切り文字列をリスト化する。
+
+    Google Sheets/gspreadの数値自動変換で「13,14」がint(1314)になるケースが
+    あるため、int/floatで来ても文字列にキャストして処理する(読み込み側でも
+    numericise_ignoreで変換を止めているが、モデル側でも防御する)。
+    ただし「13,14,11,12」→13141112のようにカンマ位置が既に失われた値は復元
+    できないため、正しい取り込みは読み込み側の設定に依存する。
+    """
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)  # str(13.0)が"13.0"になるのを防ぐ
+    if isinstance(value, (int, str)):
+        return [item.strip() for item in _CSV_SEPARATORS.split(str(value)) if item.strip()]
     return value
 
 
