@@ -4,7 +4,7 @@
 
 google:
   # 顧客マスタスプレッドシート(タブ: 顧客マスタ / 条件プロファイル / 実行ログ)
-  customer_master_sheet_id: "REPLACE_ME_CUSTOMER_MASTER_SHEET_ID"
+  customer_master_sheet_id: "1PSjN5cWo-4XD4zPAG0teevEj2OKIipCXG8eIRawk-7Q"
   customer_master_tab: "顧客マスタ"
   profile_tab: "条件プロファイル"
   admin_log_tab: "実行ログ"
@@ -21,6 +21,9 @@ search:
 matching:
   # この点数(0-100)以上をレコメンド対象とする
   score_threshold: 60
+  # 1回の実行で1顧客に配信する最大件数(スコア上位から)。レコメンドの価値は
+  # 絞り込みにあるため、初回実行やlookback_daysが長い場合の大量マッチを抑える
+  max_recommendations_per_run: 20
   weights:
     keyword: 50
     region: 20

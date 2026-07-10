@@ -71,6 +71,7 @@ def settings() -> Settings:
         ),
         matching=MatchingSettings(
             score_threshold=60,
+            max_recommendations_per_run=20,
             weights=MatchingWeights(keyword=50, region=20, qualification=20, price=10),
             price_regex_patterns=["予定価格[^0-9]{0,10}([0-9,]+)\\s*円"],
         ),

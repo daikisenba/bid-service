@@ -135,8 +135,13 @@ def score_listing(customer: Customer, listing: BidListing, settings: Settings) -
 def match_customer(
     customer: Customer, listings: list[BidListing], settings: Settings
 ) -> list[MatchResult]:
-    """1顧客に対する全マッチング結果を、閾値以上・スコア降順で返す。"""
+    """1顧客に対するマッチング結果を、閾値以上・スコア降順・上位N件で返す。
+
+    上位N件(max_recommendations_per_run)に切るのは、レコメンドの価値が
+    絞り込みにあるため。プールが顧客キーワードのOR検索で作られる以上、
+    閾値だけでは初回実行時などに数百件が通過してしまう。
+    """
     results = [score_listing(customer, listing, settings) for listing in listings]
     filtered = [r for r in results if r is not None and r.score >= settings.matching.score_threshold]
     filtered.sort(key=lambda r: r.score, reverse=True)
-    return filtered
+    return filtered[: settings.matching.max_recommendations_per_run]

@@ -85,6 +85,23 @@ def test_price_out_of_range_loses_price_points_but_not_excluded(settings):
     assert result.price_confirmed is True
 
 
+def test_match_customer_caps_at_max_recommendations_per_run(settings):
+    """実E2Eで290件が全通過した問題の回帰テスト: 上位N件に制限される。"""
+    settings.matching.max_recommendations_per_run = 5
+    customer = _customer(keywords="消耗品")
+    listings = [
+        _listing(
+            result_id=str(i),
+            key=f"k{i}",
+            external_document_uri=f"https://example.jp/{i}",
+            project_name=f"消耗品の購入 その{i}",
+        )
+        for i in range(30)
+    ]
+    results = match_customer(customer, listings, settings)
+    assert len(results) == 5
+
+
 def test_match_customer_filters_by_threshold_and_sorts_desc(settings):
     customer = _customer(keywords="消耗品,印刷")
     listings = [

@@ -30,6 +30,7 @@ class MatchingWeights(BaseModel):
 
 class MatchingSettings(BaseModel):
     score_threshold: int
+    max_recommendations_per_run: int = 20
     weights: MatchingWeights
     price_regex_patterns: list[str]
 
