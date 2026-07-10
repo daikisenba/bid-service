@@ -1,0 +1,44 @@
+# bid-service 設定ファイル
+# 秘匿情報(サービスアカウントJSON・SMTPパスワード等)は環境変数(GitHub Secrets)側に置き、
+# ここには書かない。スプレッドシートIDは秘匿情報として扱わない(共有権限で保護する)。
+
+google:
+  # 顧客マスタスプレッドシート(タブ: 顧客マスタ / 条件プロファイル / 実行ログ)
+  customer_master_sheet_id: "REPLACE_ME_CUSTOMER_MASTER_SHEET_ID"
+  customer_master_tab: "顧客マスタ"
+  profile_tab: "条件プロファイル"
+  admin_log_tab: "実行ログ"
+
+search:
+  api_base_url: "https://www.kkj.go.jp/api/"
+  # 直近何日分の公告(CFT_Issue_Date)を対象にするか
+  lookback_days: 7
+  # kkj.go.jp API の Count パラメータ上限(仕様上の最大は1000)
+  max_count: 1000
+  # HTTPタイムアウト(秒)
+  timeout_seconds: 20
+
+matching:
+  # この点数(0-100)以上をレコメンド対象とする
+  score_threshold: 60
+  weights:
+    keyword: 50
+    region: 20
+    qualification: 20
+    price: 10
+  # ProjectDescription からの予定価格ベストエフォート抽出用正規表現
+  # (kkj.go.jp APIは予定価格を構造化データとして提供していないため、
+  #  抽出できない場合は「要確認」として価格スコアを加点しない)
+  price_regex_patterns:
+    - "予定価格[^0-9]{0,10}([0-9,]+)\\s*円"
+    - "契約金額[^0-9]{0,10}([0-9,]+)\\s*円"
+
+email:
+  # フェーズ1は自動送信禁止のため、常にこの管理者アドレス宛に送る
+  admin_address: "d.senba@souki-cp.co.jp"
+  from_address: "d.senba@souki-cp.co.jp"
+  smtp_host: "smtp.gmail.com"
+  smtp_port: 587
+
+company:
+  name: "株式会社想樹"
