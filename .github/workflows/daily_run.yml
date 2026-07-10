@@ -1,0 +1,40 @@
+name: Daily Bid Recommendation Batch
+
+# 顧客ごとの入札案件レコメンドを生成し、顧客専用シートへの追記と管理者宛メール
+# 送信までを行う。顧客への自動送信は一切行わない(管理者確認後に手動転送する)。
+
+on:
+  schedule:
+    # GitHub cron is UTC. 07:30 JST = 22:30 UTC の前日。
+    # JST Mon-Fri -> UTC Sun-Thu (day-of-week 0-4)。
+    # 無料枠のスケジュール実行はベストエフォートで遅延することがあるため早めに設定する。
+    - cron: "30 22 * * 0-4"
+  workflow_dispatch: {}
+
+concurrency:
+  group: daily-bid-recommendation
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements-bid-service.txt
+
+      - name: Run daily batch
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          BID_SERVICE_SMTP_USER: ${{ secrets.BID_SERVICE_SMTP_USER }}
+          BID_SERVICE_SMTP_PASSWORD: ${{ secrets.BID_SERVICE_SMTP_PASSWORD }}
+        run: python main.py --config config/settings.yaml
