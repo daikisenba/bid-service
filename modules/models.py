@@ -91,3 +91,22 @@ class MatchResult(BaseModel):
     reasons: list[str]
     estimated_price: int | None = None
     price_confirmed: bool = False
+
+
+class SkipReason(BaseModel):
+    """処理をスキップした顧客とその理由(管理者ログ用)。"""
+
+    customer_id: str
+    reason: str
+
+
+class CustomerError(BaseModel):
+    """顧客単位の処理中に発生したエラー(管理者ログ用)。"""
+
+    customer_id: str
+    error: str
+
+
+class CustomerLoadResult(BaseModel):
+    customers: list[Customer]
+    skipped: list[SkipReason]
