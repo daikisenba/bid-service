@@ -28,6 +28,9 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
+          # 依存ファイルが標準名(requirements.txt)ではないため明示する。
+          # 未指定だとsetup-pythonのキャッシュ解決が失敗しジョブごと落ちる
+          cache-dependency-path: requirements-bid-service.txt
 
       - name: Install dependencies
         run: pip install -r requirements-bid-service.txt
