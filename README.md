@@ -20,6 +20,7 @@ bid-service/
 │   ├── customer.py                # 顧客マスタ読込・バリデーション
 │   ├── search.py                 # kkj.go.jp検索APIクライアント
 │   ├── matching.py               # スコアリング・除外判定
+│   ├── awards.py                 # 落札実績オープンデータ取得・参考落札相場計算
 │   └── delivery.py               # シート追記・管理者宛メール・実行ログ
 ├── scripts/
 │   ├── setup_customer_sheet.py   # 顧客追加(マスタ行追加+専用シート初期化)

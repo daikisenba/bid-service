@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from modules.config import (
+    AwardsSettings,
     CompanySettings,
     EmailSettings,
     GoogleSettings,
@@ -11,6 +12,7 @@ from modules.config import (
     SearchSettings,
     Settings,
 )
+from modules.delivery import RECOMMEND_HEADERS  # 見出しの単一ソース(参考落札相場列を含む)
 from tests.fakes import FakeGspreadClient, FakeSpreadsheet, FakeWorksheet
 
 MASTER_ID = "MASTER_ID"
@@ -37,17 +39,10 @@ PROFILE_HEADERS = [
     "資格等級",
 ]
 ADMIN_LOG_HEADERS = ["実行日時", "処理顧客数", "スキップ顧客数", "総マッチ件数", "エラー件数", "詳細"]
-RECOMMEND_HEADERS = [
-    "案件名",
-    "発注機関",
-    "公告日",
-    "締切日",
-    "予定価格",
-    "案件URL",
-    "マッチ度スコア",
-    "レコメンド理由",
-    "ステータス",
-]
+# RECOMMEND_HEADERS は delivery からインポート(参考落札相場列を含む単一ソース)。
+# 列インデックスは名前で引けるようここで定義しておく。
+AWARD_COL_INDEX = next(i for i, h in enumerate(RECOMMEND_HEADERS) if h.startswith("参考落札相場"))
+STATUS_COL_INDEX = RECOMMEND_HEADERS.index("ステータス")
 
 
 @pytest.fixture
@@ -82,6 +77,7 @@ def settings() -> Settings:
             smtp_port=587,
         ),
         company=CompanySettings(name="テスト株式会社"),
+        awards=AwardsSettings(enabled=True, fiscal_year_lookback=2, timeout_seconds=60),
     )
 
 

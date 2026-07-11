@@ -102,6 +102,38 @@ class BidListing(BaseModel):
         return self.external_document_uri or self.key
 
 
+class AwardRecord(BaseModel):
+    """落札実績オープンデータ(調達ポータル)の1件。列は生値のまま保持する
+    (種別コード・機関コードの公式コード表は現状デコードせず生値表示)。"""
+
+    project_id: str
+    project_name: str
+    award_date: str | None = None
+    award_amount: int | None = None  # 落札金額。公表値(税込/税抜は非明示のため加工しない)
+    type_code: str | None = None
+    org_code: str | None = None
+    winner_name: str | None = None
+    corporate_number: str | None = None
+
+
+class AwardExample(BaseModel):
+    """相場欄に載せる落札実例。"""
+
+    project_name: str
+    amount: int
+    winner: str | None = None
+
+
+class PriceStats(BaseModel):
+    """同種過去落札の相場統計。count=0 は「相場データなし」を意味する。"""
+
+    count: int
+    median: int | None = None
+    p25: int | None = None
+    p75: int | None = None
+    examples: list[AwardExample] = Field(default_factory=list)
+
+
 class MatchResult(BaseModel):
     listing: BidListing
     customer_id: str
@@ -109,6 +141,9 @@ class MatchResult(BaseModel):
     reasons: list[str]
     estimated_price: int | None = None
     price_confirmed: bool = False
+    # 参考落札相場(フェーズ2 ステップ①)。None は相場照合を行わなかったことを表し、
+    # count=0 は照合したが同種案件が見つからなかったことを表す(両者は区別する)。
+    price_stats: PriceStats | None = None
 
 
 class SkipReason(BaseModel):

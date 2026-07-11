@@ -46,12 +46,23 @@ class CompanySettings(BaseModel):
     name: str
 
 
+class AwardsSettings(BaseModel):
+    """落札実績オープンデータ(参考落札相場)の設定。"""
+
+    enabled: bool = True
+    api_base_url: str = "https://api.p-portal.go.jp/pps-web-biz/UAB03/OAB0301"
+    # 今年度を含め何年度分をさかのぼって相場計算に使うか(2 = 今年度+前年度)
+    fiscal_year_lookback: int = 2
+    timeout_seconds: int = 60
+
+
 class Settings(BaseModel):
     google: GoogleSettings
     search: SearchSettings
     matching: MatchingSettings
     email: EmailSettings
     company: CompanySettings
+    awards: AwardsSettings = AwardsSettings()
 
 
 def load_settings(path: str | Path = "config/settings.yaml") -> Settings:

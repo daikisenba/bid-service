@@ -15,6 +15,7 @@ import sys
 from datetime import datetime, timezone
 
 from modules.auth import build_gspread_client, smtp_credentials
+from modules.awards import attach_price_stats, fetch_awards
 from modules.customer import load_active_customers
 from modules.delivery import append_new_matches, send_recommend_email, write_admin_summary
 from modules.matching import match_customer
@@ -68,6 +69,16 @@ def run(settings_path: str = "config/settings.yaml") -> int:
 
     logger.info("案件プール取得: %d件", len(candidate_pool))
 
+    # 参考落札相場データを1回だけ取得する(ベストエフォート。失敗しても本体は止めない)。
+    # None は「相場照合を行わなかった」ことを表し、相場欄は空欄になる。
+    award_records = None
+    if settings.awards.enabled:
+        try:
+            award_records = fetch_awards(settings)
+            logger.info("落札実績データ取得: %d件", len(award_records))
+        except Exception as exc:  # noqa: BLE001 - 相場欄が空になるだけで本体は継続
+            logger.warning("落札実績データの取得に失敗しました(相場欄は空になります): %s", exc)
+
     total_matches = 0
     errors: list[CustomerError] = []
     processed = 0
@@ -75,6 +86,8 @@ def run(settings_path: str = "config/settings.yaml") -> int:
     for customer in customers:
         try:
             matches = match_customer(customer, candidate_pool, settings)
+            if award_records is not None:
+                attach_price_stats(customer, matches, award_records)
             new_matches = append_new_matches(gc, customer, matches, settings)
             # シートに追記された時点でカウントする。この後のメール送信が失敗しても
             # 行は既に書かれているため、サマリの総マッチ件数から漏らさない

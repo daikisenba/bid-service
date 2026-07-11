@@ -15,10 +15,13 @@ from pathlib import Path
 
 import gspread
 
+from .awards import AWARD_SOURCE_NOTE
 from .config import Settings
-from .models import Customer, CustomerError, MatchResult, SkipReason
+from .models import Customer, CustomerError, MatchResult, PriceStats, SkipReason
 
 RECOMMEND_TAB = "レコメンド案件"
+# 参考落札相場の列見出しには出典を併記し、シート上でも出典が常に見えるようにする
+_AWARD_COL_HEADER = f"参考落札相場\n（{AWARD_SOURCE_NOTE}）"
 RECOMMEND_HEADERS = [
     "案件名",
     "発注機関",
@@ -28,6 +31,7 @@ RECOMMEND_HEADERS = [
     "案件URL",
     "マッチ度スコア",
     "レコメンド理由",
+    _AWARD_COL_HEADER,
     "ステータス",
 ]
 _URL_COLUMN = RECOMMEND_HEADERS.index("案件URL") + 1
@@ -39,6 +43,18 @@ def _price_display(match: MatchResult) -> str:
     if match.estimated_price is None:
         return "要確認"
     return f"¥{match.estimated_price:,}"
+
+
+def _award_cell(stats: PriceStats | None) -> str:
+    """シート用の参考落札相場セル文字列。None は照合なし(空欄)、count=0 は相場データなし。"""
+    if stats is None:
+        return ""
+    if stats.count == 0:
+        return "相場データなし"
+    text = f"同種{stats.count}件 中央値¥{stats.median:,}"
+    if stats.p25 is not None and stats.p75 is not None:
+        text += f"（¥{stats.p25:,}〜¥{stats.p75:,}）"
+    return text
 
 
 def _existing_urls(ws: gspread.Worksheet) -> set[str]:
@@ -68,12 +84,27 @@ def append_new_matches(
             m.listing.dedup_key,
             m.score,
             " / ".join(m.reasons),
+            _award_cell(m.price_stats),
             "未確認",
         ]
         for m in new_matches
     ]
     ws.append_rows(rows, value_input_option="USER_ENTERED")
     return new_matches
+
+
+def _award_email_lines(stats: PriceStats | None) -> str:
+    """メール用の参考落札相場ブロック。相場照合なし(None)または0件のときは空文字。"""
+    if stats is None or stats.count == 0:
+        return ""
+    line = f"   参考落札相場: 同種{stats.count}件 中央値¥{stats.median:,}"
+    if stats.p25 is not None and stats.p75 is not None:
+        line += f"（¥{stats.p25:,}〜¥{stats.p75:,}）"
+    line += "\n"
+    for ex in stats.examples:
+        winner = f"（{ex.winner}）" if ex.winner else ""
+        line += f"     実例: {ex.project_name} ¥{ex.amount:,}{winner}\n"
+    return line
 
 
 def _render_email_body(customer: Customer, matches: list[MatchResult], settings: Settings) -> str:
@@ -88,13 +119,18 @@ def _render_email_body(customer: Customer, matches: list[MatchResult], settings:
             f"   予定価格: {_price_display(m)}\n"
             f"   マッチ度: {m.score}点\n"
             f"   案件URL: {listing.dedup_key}\n"
+            f"{_award_email_lines(m.price_stats)}"
         )
-    return template.format(
+    body = template.format(
         company_name=settings.company.name,
         customer_company_name=customer.company_name,
         match_count=len(matches),
         listings="\n".join(listing_lines),
     )
+    # 参考落札相場を1件でも掲載したら出典を明記する(利用条件)
+    if any(m.price_stats and m.price_stats.count > 0 for m in matches):
+        body += f"\n{AWARD_SOURCE_NOTE}\n"
+    return body
 
 
 def send_recommend_email(

@@ -3,7 +3,16 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from modules.delivery import append_new_matches, send_recommend_email, write_admin_summary
-from modules.models import BidListing, Customer, CustomerError, CustomerProfile, MatchResult, SkipReason
+from modules.models import (
+    BidListing,
+    Customer,
+    CustomerError,
+    CustomerProfile,
+    MatchResult,
+    PriceStats,
+    SkipReason,
+)
+from tests.conftest import AWARD_COL_INDEX, STATUS_COL_INDEX
 
 
 def _customer(output_sheet_id: str = "SHEET_C001") -> Customer:
@@ -19,7 +28,7 @@ def _customer(output_sheet_id: str = "SHEET_C001") -> Customer:
     )
 
 
-def _match(url: str = "https://example.jp/1", score: int = 90) -> MatchResult:
+def _match(url: str = "https://example.jp/1", score: int = 90, price_stats: PriceStats | None = None) -> MatchResult:
     listing = BidListing(
         result_id="1",
         key="k1",
@@ -29,7 +38,13 @@ def _match(url: str = "https://example.jp/1", score: int = 90) -> MatchResult:
         period_end_time="2026-08-01",
     )
     return MatchResult(
-        listing=listing, customer_id="C001", score=score, reasons=["ok"], estimated_price=120000, price_confirmed=True
+        listing=listing,
+        customer_id="C001",
+        score=score,
+        reasons=["ok"],
+        estimated_price=120000,
+        price_confirmed=True,
+        price_stats=price_stats,
     )
 
 
@@ -42,7 +57,31 @@ def test_append_new_matches_writes_row(fake_gc, settings):
     assert len(ws.rows) == 1
     assert ws.rows[0][0] == "消耗品の購入"
     assert ws.rows[0][5] == "https://example.jp/1"
-    assert ws.rows[0][8] == "未確認"
+    assert ws.rows[0][STATUS_COL_INDEX] == "未確認"
+
+
+def test_award_cell_written_when_stats_present(fake_gc, settings):
+    stats = PriceStats(count=12, median=248000, p25=180000, p75=310000)
+    new = append_new_matches(fake_gc, _customer(), [_match(price_stats=stats)], settings)
+    assert len(new) == 1
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet("レコメンド案件")
+    cell = ws.rows[0][AWARD_COL_INDEX]
+    assert "同種12件" in cell
+    assert "¥248,000" in cell
+    assert "¥180,000〜¥310,000" in cell
+
+
+def test_award_cell_shows_no_data_when_zero_comparables(fake_gc, settings):
+    new = append_new_matches(fake_gc, _customer(), [_match(price_stats=PriceStats(count=0))], settings)
+    assert new[0].price_stats.count == 0
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet("レコメンド案件")
+    assert ws.rows[0][AWARD_COL_INDEX] == "相場データなし"
+
+
+def test_award_cell_blank_when_stats_none(fake_gc, settings):
+    append_new_matches(fake_gc, _customer(), [_match(price_stats=None)], settings)
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet("レコメンド案件")
+    assert ws.rows[0][AWARD_COL_INDEX] == ""
 
 
 def test_append_new_matches_dedups_by_url_on_second_run(fake_gc, settings):
@@ -92,6 +131,53 @@ def test_render_and_send_recommend_email(monkeypatch, settings):
     assert "自動送信は行っていません" in body
     assert customer.contact_email in body
     assert "消耗品の購入" in body
+
+
+def _capture_email_body(monkeypatch, settings, matches) -> str:
+    sent = []
+
+    class FakeSMTP:
+        def __init__(self, host, port):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def starttls(self):
+            pass
+
+        def login(self, user, password):
+            pass
+
+        def send_message(self, msg):
+            sent.append(msg)
+
+    monkeypatch.setattr("modules.delivery.smtplib.SMTP", FakeSMTP)
+    send_recommend_email(_customer(), matches, settings, "u", "p")
+    return sent[0].get_payload()[0].get_payload(decode=True).decode("utf-8")
+
+
+def test_email_includes_award_stats_and_source_note(monkeypatch, settings):
+    stats = PriceStats(
+        count=5,
+        median=248000,
+        p25=180000,
+        p75=310000,
+        examples=[{"project_name": "文具一式の購入", "amount": 250000, "winner": "〇〇商事"}],
+    )
+    body = _capture_email_body(monkeypatch, settings, [_match(price_stats=stats)])
+    assert "参考落札相場: 同種5件 中央値¥248,000" in body
+    assert "実例: 文具一式の購入 ¥250,000（〇〇商事）" in body
+    assert "出典: 調達ポータル(デジタル庁)落札実績オープンデータ" in body
+
+
+def test_email_omits_source_note_when_no_award_data(monkeypatch, settings):
+    body = _capture_email_body(monkeypatch, settings, [_match(price_stats=PriceStats(count=0))])
+    assert "参考落札相場" not in body
+    assert "出典:" not in body
 
 
 def test_write_admin_summary_appends_row(fake_gc, settings):

@@ -45,3 +45,11 @@ email:
 
 company:
   name: "株式会社想樹"
+
+awards:
+  # 参考落札相場(調達ポータル 落札実績オープンデータ)。無効化すると相場欄は空になる
+  enabled: true
+  api_base_url: "https://api.p-portal.go.jp/pps-web-biz/UAB03/OAB0301"
+  # 今年度を含め何年度分をさかのぼって相場計算に使うか(2 = 今年度+前年度)
+  fiscal_year_lookback: 2
+  timeout_seconds: 60
