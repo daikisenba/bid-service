@@ -100,8 +100,7 @@
 無料でお試しいただけます(トライアル)。
 
 - Web: (資料請求フォームURL)
-- Mail: d.senba@souki-cp.co.jp
-- Tel: (電話番号)
+- Mail: info@souki-cp.co.jp
 
 株式会社想樹 / 担当: 千羽 太樹
 
