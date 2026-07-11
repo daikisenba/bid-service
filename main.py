@@ -76,9 +76,11 @@ def run(settings_path: str = "config/settings.yaml") -> int:
         try:
             matches = match_customer(customer, candidate_pool, settings)
             new_matches = append_new_matches(gc, customer, matches, settings)
+            # シートに追記された時点でカウントする。この後のメール送信が失敗しても
+            # 行は既に書かれているため、サマリの総マッチ件数から漏らさない
+            total_matches += len(new_matches)
             if new_matches:
                 send_recommend_email(customer, new_matches, settings, smtp_user, smtp_password)
-            total_matches += len(new_matches)
             processed += 1
             logger.info(
                 "顧客 %s (%s): マッチ%d件中 新着%d件",
