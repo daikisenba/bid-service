@@ -41,10 +41,19 @@ def _extract_price(listing: BidListing, patterns: list[str]) -> int | None:
 
 
 def _keyword_component(customer: Customer, listing: BidListing) -> tuple[float, str]:
-    text = _searchable_text(listing)
-    matched = _contains_any(text, customer.profile.keywords)
-    if matched:
-        return _FULL, f"キーワード一致: {', '.join(matched)}"
+    """案件名一致は満点、公告文のみの一致は半分。
+
+    kkj.go.jp APIの全文検索は公告文・添付由来の過剰マッチを多く含む
+    (実測: 「シュレッダー」で4,694件ヒットするが上位案件名は無関係)。
+    案件名に現れるキーワードが商品性の実体であるため、公告文のみの一致は
+    参考扱いに格下げする。
+    """
+    name_matched = _contains_any(listing.project_name or "", customer.profile.keywords)
+    if name_matched:
+        return _FULL, f"キーワード一致(案件名): {', '.join(name_matched)}"
+    desc_matched = _contains_any(listing.project_description or "", customer.profile.keywords)
+    if desc_matched:
+        return _HALF, f"キーワード一致(公告文のみ・要確認): {', '.join(desc_matched)}"
     return _NONE, "対象キーワード不一致"
 
 

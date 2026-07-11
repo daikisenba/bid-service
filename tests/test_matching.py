@@ -85,6 +85,38 @@ def test_price_out_of_range_loses_price_points_but_not_excluded(settings):
     assert result.price_confirmed is True
 
 
+def test_keyword_in_project_name_gets_full_credit(settings):
+    customer = _customer(keywords="シュレッダー")
+    listing = _listing(project_name="シュレッダーの購入", project_description=None)
+    result = score_listing(customer, listing, settings)
+    assert result is not None
+    assert result.score == 100
+    assert "案件名" in result.reasons[0]
+
+
+def test_keyword_only_in_description_gets_half_credit(settings):
+    """全文検索の過剰マッチ対策の回帰テスト(2026-07-10実測: 「シュレッダー」で
+    4,694件ヒットするが上位案件名は無関係)。公告文のみの一致は半分の点数。"""
+    customer = _customer(keywords="シュレッダー")
+    listing = _listing(
+        project_name="庁舎廃棄物処理業務",
+        project_description="機密文書はシュレッダー処理を行うこと",
+    )
+    result = score_listing(customer, listing, settings)
+    assert result is not None
+    # keyword(50*0.5=25) + region(20) + qualification(20) + price(10) = 75
+    assert result.score == 75
+    assert "公告文のみ" in result.reasons[0]
+
+
+def test_keyword_nowhere_scores_below_threshold(settings):
+    customer = _customer(keywords="シュレッダー")
+    listing = _listing(project_name="電気需給契約", project_description="通常の電力供給契約")
+    result = score_listing(customer, listing, settings)
+    assert result is not None
+    assert result.score == 50  # region20+qual20+price10のみ → 閾値60未満
+
+
 def test_match_customer_caps_at_max_recommendations_per_run(settings):
     """実E2Eで290件が全通過した問題の回帰テスト: 上位N件に制限される。"""
     settings.matching.max_recommendations_per_run = 5
