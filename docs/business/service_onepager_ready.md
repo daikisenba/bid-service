@@ -184,7 +184,7 @@ STEP 3  検討する
 ▶ 貼るテキスト（連絡先・QRの横）
 ```
 Web：souki-cp.co.jp/nyusatsu-hisho
-Mail：info@souki-cp.co.jp
+Mail：d.senba@souki-cp.co.jp
 （お問い合わせはメールのみで承ります）
 ```
 配置: 帯の左に見出し2行(白・太字)、右に**QRコード**(リンク先 `https://www.souki-cp.co.jp/nyusatsu-hisho`)＋連絡先。QRは必須。電話番号は記載しない。
@@ -206,7 +206,7 @@ Mail：info@souki-cp.co.jp
 - [ ] 料金比較表に「各社公表情報に基づく目安」の注記があるか
 - [ ] 出典表記（調達ポータル/デジタル庁）が裏面最下部にあるか
 - [ ] QRコードのリンク先が `https://www.souki-cp.co.jp/nyusatsu-hisho` か
-- [ ] 連絡先はメール（info@souki-cp.co.jp）のみで、電話番号を記載していないか
+- [ ] 連絡先はメール（d.senba@souki-cp.co.jp）のみで、電話番号を記載していないか
 - [ ] 橙色はバッジの「0円」1箇所のみに使い、多用していないか
 - [ ] 文字を詰め込みすぎず、余白で"信頼感"が出ているか
 
