@@ -165,6 +165,7 @@ python scripts/coverage_check.py
 | ローカル実行時に `SSLCertVerificationError` | 社内プロキシ等でPythonの証明書ストアが信頼していない可能性。GitHub Actions(Ubuntu runner)では発生しない想定。ローカル確認が必要な場合はネットワーク管理者に確認する |
 | kkj.go.jp APIが `<Error>` を返す | パラメータ不正またはAPI側の一時的な問題。main.pyはこれを検出すると(1顧客の失敗ではなく案件探索全体の失敗として)実行ログにエラー記録し、その回のバッチは中断する |
 | 顧客シートに書き込めない(`KeyError`/権限エラー) | 顧客専用シートにサービスアカウントのclient_emailが編集者として共有されているか確認する |
+| メール送信で `SMTPAuthenticationError (535 BadCredentials)` | GmailがSMTPログインを拒否している。①`BID_SERVICE_SMTP_PASSWORD`が通常パスワードではなくGoogleの**アプリパスワード(16桁)**であること、②送信元アカウントで**2段階認証が有効**であること、③`BID_SERVICE_SMTP_USER`が送信元アドレスと一致していること、を確認する。アプリパスワードは https://myaccount.google.com/apppasswords で再発行できる。Google Workspace(独自ドメイン)の場合は管理者がアプリパスワードを許可している必要がある。※前後の空白/改行やアプリパスワード表示の空白はコード側で自動除去する |
 
 ## フェーズ2設計メモ(今回は設計のみ・実装しない)
 

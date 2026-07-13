@@ -19,8 +19,11 @@ def build_gspread_client() -> gspread.Client:
 
 
 def smtp_credentials() -> tuple[str, str]:
-    user = os.environ.get("BID_SERVICE_SMTP_USER")
-    password = os.environ.get("BID_SERVICE_SMTP_PASSWORD")
+    user = (os.environ.get("BID_SERVICE_SMTP_USER") or "").strip()
+    # Gmailのアプリパスワードは「xxxx xxxx xxxx xxxx」と空白区切りで表示されるため、
+    # 空白を除去して16桁に正規化する。前後の改行・空白(GitHub Secretsへの貼り付けで
+    # 混入しやすく、535認証エラーの典型原因)もあわせて除去する。
+    password = (os.environ.get("BID_SERVICE_SMTP_PASSWORD") or "").replace(" ", "").strip()
     if not user or not password:
         raise RuntimeError(
             "環境変数 BID_SERVICE_SMTP_USER / BID_SERVICE_SMTP_PASSWORD が設定されていません"

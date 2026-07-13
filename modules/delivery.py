@@ -156,7 +156,17 @@ def send_recommend_email(
 
     with smtplib.SMTP(settings.email.smtp_host, settings.email.smtp_port) as server:
         server.starttls()
-        server.login(smtp_user, smtp_password)
+        try:
+            server.login(smtp_user, smtp_password)
+        except smtplib.SMTPAuthenticationError as exc:
+            raise RuntimeError(
+                "SMTP認証に失敗しました(535 BadCredentials)。以下を確認してください: "
+                "(1) BID_SERVICE_SMTP_PASSWORD がGoogleの『アプリパスワード』(16桁)であること"
+                "(通常のログインパスワードでは認証できません)、"
+                "(2) 送信元アカウントで2段階認証が有効であること、"
+                "(3) BID_SERVICE_SMTP_USER が送信元メールアドレスと一致していること。"
+                f" [SMTP応答: {exc.smtp_code} {exc.smtp_error!r}]"
+            ) from exc
         server.send_message(msg)
 
 
