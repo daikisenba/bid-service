@@ -180,6 +180,29 @@ def test_email_omits_source_note_when_no_award_data(monkeypatch, settings):
     assert "出典:" not in body
 
 
+def test_email_footer_always_includes_reply_guidance(monkeypatch, settings):
+    # 配信条件の変更は「メール返信」方式。案内文はURL設定の有無に関わらず常に出力される
+    body = _capture_email_body(monkeypatch, settings, [_match()])
+    assert "【各種お手続き】" in body
+    assert "このメールにそのままご返信ください" in body
+    # 1往復で完了させるための返信例と反映タイミングの目安も載せる
+    assert "対象エリアに神奈川県を追加" in body
+    assert "翌営業日までに" in body
+
+
+def test_email_footer_includes_portal_link_when_url_set(monkeypatch, settings):
+    settings.email.customer_portal_url = "https://billing.stripe.com/p/login/test123"
+    body = _capture_email_body(monkeypatch, settings, [_match()])
+    assert "・配信の解約・お支払い方法の変更: https://billing.stripe.com/p/login/test123" in body
+
+
+def test_email_footer_omits_portal_link_when_url_empty(monkeypatch, settings):
+    # ポータルURL未設定でも条件変更の案内は出るが、解約リンク行は出ない(空リンク防止)
+    body = _capture_email_body(monkeypatch, settings, [_match()])
+    assert "このメールにそのままご返信ください" in body
+    assert "解約・お支払い方法の変更" not in body
+
+
 def test_write_admin_summary_appends_row(fake_gc, settings):
     write_admin_summary(
         fake_gc,

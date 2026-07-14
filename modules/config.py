@@ -40,6 +40,10 @@ class EmailSettings(BaseModel):
     from_address: str
     smtp_host: str
     smtp_port: int
+    # Stripeカスタマーポータル(解約・カード変更)。空文字のうちはフッターに
+    # リンク行を出力しない。なお配信条件の変更は「メール返信」方式のため
+    # 専用URLは持たない(フッターに固定の案内文を常時出力する)。
+    customer_portal_url: str = ""
 
 
 class CompanySettings(BaseModel):

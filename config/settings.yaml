@@ -42,6 +42,9 @@ email:
   from_address: "d.senba@souki-cp.co.jp"
   smtp_host: "smtp.gmail.com"
   smtp_port: 587
+  # Stripeカスタマーポータル(解約・カード変更)。フッターにリンクとして表示される。
+  # ※配信条件の変更は「メール返信」方式(フッターに固定の案内文を常時出力)のため専用URLなし
+  customer_portal_url: "https://billing.stripe.com/p/login/14AaER5s3cOk2FM4cX67S00"
 
 company:
   name: "株式会社想樹"

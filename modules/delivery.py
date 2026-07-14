@@ -107,6 +107,27 @@ def _award_email_lines(stats: PriceStats | None) -> str:
     return line
 
 
+def _footer_lines(settings: Settings) -> str:
+    """配信メールのフッター(各種お手続き案内)。
+
+    配信条件の変更は「メール返信」方式のため常に出力する(専用フォームは設けない)。
+    1往復で完了するよう、返信の書き方の例と反映タイミングの目安を添える。
+    Stripeカスタマーポータル(解約・カード変更)のリンクはURL設定時のみ出力する。"""
+    lines = [
+        "・配信条件(対象エリア・品目など)の変更: このメールにそのままご返信ください",
+        "  例:「対象エリアに神奈川県を追加してください」",
+        "     「キーワードに『印刷』を追加、『保守』は除外してください」",
+        "  変更したい内容を箇条書きでお送りいただければ、翌営業日までに担当が反映し、",
+        "  完了をご連絡いたします。",
+    ]
+    if settings.email.customer_portal_url:
+        lines.append(
+            f"・配信の解約・お支払い方法の変更: {settings.email.customer_portal_url}"
+        )
+    divider = "----------------------------------------"
+    return f"\n{divider}\n【各種お手続き】\n" + "\n".join(lines) + "\n"
+
+
 def _render_email_body(customer: Customer, matches: list[MatchResult], settings: Settings) -> str:
     template = _TEMPLATE_PATH.read_text(encoding="utf-8")
     listing_lines = []
@@ -126,6 +147,7 @@ def _render_email_body(customer: Customer, matches: list[MatchResult], settings:
         customer_company_name=customer.company_name,
         match_count=len(matches),
         listings="\n".join(listing_lines),
+        footer=_footer_lines(settings),
     )
     # 参考落札相場を1件でも掲載したら出典を明記する(利用条件)
     if any(m.price_stats and m.price_stats.count > 0 for m in matches):
