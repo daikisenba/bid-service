@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from modules.delivery import append_new_matches, send_recommend_email, write_admin_summary
+import smtplib
+
+import pytest
+
+from modules.delivery import (
+    append_new_matches,
+    check_smtp_login,
+    send_recommend_email,
+    write_admin_summary,
+)
 from modules.models import (
     BidListing,
     Customer,
@@ -201,6 +210,41 @@ def test_email_footer_omits_portal_link_when_url_empty(monkeypatch, settings):
     body = _capture_email_body(monkeypatch, settings, [_match()])
     assert "このメールにそのままご返信ください" in body
     assert "解約・お支払い方法の変更" not in body
+
+
+class _FakeSMTPForLoginCheck:
+    """接続+starttls+loginのみを模擬する(send_messageは呼ばれない想定)。"""
+
+    def __init__(self, host, port):
+        self.host = host
+        self.port = port
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def starttls(self):
+        pass
+
+    def login(self, user, password):
+        if password != "correct_pass":
+            raise smtplib.SMTPAuthenticationError(535, b"5.7.8 Username and Password not accepted")
+
+    def send_message(self, msg):  # pragma: no cover - 呼ばれないことをテストで確認する
+        raise AssertionError("check_smtp_login はメールを送信してはならない")
+
+
+def test_check_smtp_login_succeeds_without_sending_mail(monkeypatch, settings):
+    monkeypatch.setattr("modules.delivery.smtplib.SMTP", _FakeSMTPForLoginCheck)
+    check_smtp_login(settings, "smtp_user", "correct_pass")  # 例外が出なければOK
+
+
+def test_check_smtp_login_raises_helpful_error_on_bad_credentials(monkeypatch, settings):
+    monkeypatch.setattr("modules.delivery.smtplib.SMTP", _FakeSMTPForLoginCheck)
+    with pytest.raises(RuntimeError, match="535 BadCredentials"):
+        check_smtp_login(settings, "smtp_user", "wrong_pass")
 
 
 def test_write_admin_summary_appends_row(fake_gc, settings):

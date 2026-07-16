@@ -155,6 +155,32 @@ def _render_email_body(customer: Customer, matches: list[MatchResult], settings:
     return body
 
 
+def _login_or_raise(server: smtplib.SMTP, smtp_user: str, smtp_password: str) -> None:
+    try:
+        server.login(smtp_user, smtp_password)
+    except smtplib.SMTPAuthenticationError as exc:
+        raise RuntimeError(
+            "SMTP認証に失敗しました(535 BadCredentials)。以下を確認してください: "
+            "(1) BID_SERVICE_SMTP_PASSWORD がGoogleの『アプリパスワード』(16桁)であること"
+            "(通常のログインパスワードでは認証できません)、"
+            "(2) 送信元アカウントで2段階認証が有効であること、"
+            "(3) BID_SERVICE_SMTP_USER が送信元メールアドレスと一致していること。"
+            f" [SMTP応答: {exc.smtp_code} {exc.smtp_error!r}]"
+        ) from exc
+
+
+def check_smtp_login(settings: Settings, smtp_user: str, smtp_password: str) -> None:
+    """SMTP接続+認証のみを検証する(メール送信は行わない)。
+
+    send_recommend_email は新着マッチがあるときしか呼ばれないため、新着0件が
+    続くとパスワード切れに気づけない(「実行成功」が誤って安全と解釈される)。
+    この関数はマッチの有無に関係なく単体で認証を検証できるようにする。
+    """
+    with smtplib.SMTP(settings.email.smtp_host, settings.email.smtp_port) as server:
+        server.starttls()
+        _login_or_raise(server, smtp_user, smtp_password)
+
+
 def send_recommend_email(
     customer: Customer,
     matches: list[MatchResult],
@@ -178,17 +204,7 @@ def send_recommend_email(
 
     with smtplib.SMTP(settings.email.smtp_host, settings.email.smtp_port) as server:
         server.starttls()
-        try:
-            server.login(smtp_user, smtp_password)
-        except smtplib.SMTPAuthenticationError as exc:
-            raise RuntimeError(
-                "SMTP認証に失敗しました(535 BadCredentials)。以下を確認してください: "
-                "(1) BID_SERVICE_SMTP_PASSWORD がGoogleの『アプリパスワード』(16桁)であること"
-                "(通常のログインパスワードでは認証できません)、"
-                "(2) 送信元アカウントで2段階認証が有効であること、"
-                "(3) BID_SERVICE_SMTP_USER が送信元メールアドレスと一致していること。"
-                f" [SMTP応答: {exc.smtp_code} {exc.smtp_error!r}]"
-            ) from exc
+        _login_or_raise(server, smtp_user, smtp_password)
         server.send_message(msg)
 
 

@@ -17,7 +17,12 @@ from datetime import datetime, timezone
 from modules.auth import build_gspread_client, smtp_credentials
 from modules.awards import attach_price_stats, fetch_awards
 from modules.customer import load_active_customers
-from modules.delivery import append_new_matches, send_recommend_email, write_admin_summary
+from modules.delivery import (
+    append_new_matches,
+    check_smtp_login,
+    send_recommend_email,
+    write_admin_summary,
+)
 from modules.matching import match_customer
 from modules.models import CustomerError
 from modules.search import fetch_candidate_pool
@@ -25,6 +30,24 @@ from modules.config import load_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+
+def run_smtp_check(settings_path: str = "config/settings.yaml") -> int:
+    """SMTP接続+認証のみを検証する(新着マッチの有無に依存しない)。
+
+    通常のrun()はメール送信を新着マッチがあるときしか実行しないため、
+    「実行成功」がSMTP認証の正常性を保証しない(新着0件だと未検証のまま緑になる)。
+    アプリパスワード更新後の確認は、この単体チェックで行う。
+    """
+    settings = load_settings(settings_path)
+    smtp_user, smtp_password = smtp_credentials()
+    try:
+        check_smtp_login(settings, smtp_user, smtp_password)
+    except RuntimeError as exc:
+        logger.error("SMTP認証チェック: 失敗 - %s", exc)
+        return 1
+    logger.info("SMTP認証チェック: 成功(%s 経由で %s としてログインできました)", settings.email.smtp_host, smtp_user)
+    return 0
 
 
 def run(settings_path: str = "config/settings.yaml") -> int:
@@ -129,7 +152,14 @@ def run(settings_path: str = "config/settings.yaml") -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="外販版入札支援サービス 日次バッチ")
     parser.add_argument("--config", default="config/settings.yaml", help="settings.yamlのパス")
+    parser.add_argument(
+        "--smtp-check",
+        action="store_true",
+        help="SMTP接続+認証のみを検証して終了する(新着マッチの有無に依存しない)",
+    )
     args = parser.parse_args()
+    if args.smtp_check:
+        return run_smtp_check(args.config)
     return run(args.config)
 
 

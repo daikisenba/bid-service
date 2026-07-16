@@ -9,7 +9,12 @@ on:
     # JST Mon-Fri -> UTC Sun-Thu (day-of-week 0-4)。
     # 無料枠のスケジュール実行はベストエフォートで遅延することがあるため早めに設定する。
     - cron: "30 22 * * 0-4"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      smtp_check:
+        description: "SMTP接続+認証のみを検証する(新着マッチ0件でも判定できる)"
+        type: boolean
+        default: false
 
 concurrency:
   group: daily-bid-recommendation
@@ -36,8 +41,16 @@ jobs:
         run: pip install -r requirements-bid-service.txt
 
       - name: Run daily batch
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.smtp_check != true }}
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           BID_SERVICE_SMTP_USER: ${{ secrets.BID_SERVICE_SMTP_USER }}
           BID_SERVICE_SMTP_PASSWORD: ${{ secrets.BID_SERVICE_SMTP_PASSWORD }}
         run: python main.py --config config/settings.yaml
+
+      - name: SMTP認証チェックのみ実行
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.smtp_check == true }}
+        env:
+          BID_SERVICE_SMTP_USER: ${{ secrets.BID_SERVICE_SMTP_USER }}
+          BID_SERVICE_SMTP_PASSWORD: ${{ secrets.BID_SERVICE_SMTP_PASSWORD }}
+        run: python main.py --config config/settings.yaml --smtp-check

@@ -148,6 +148,38 @@ def test_one_customer_failure_does_not_stop_others(monkeypatch, settings, fake_g
     assert "C001" in admin_log_rows[0][5]
 
 
+def test_smtp_check_succeeds_without_touching_sheets_or_matching(monkeypatch, settings):
+    # --smtp-check はGoogle Sheets/案件探索に触れず、SMTP接続+認証のみを検証する
+    monkeypatch.setattr("main.load_settings", lambda path: settings)
+    monkeypatch.setattr("main.smtp_credentials", lambda: ("smtp_user", "smtp_pass"))
+    monkeypatch.setattr("main.check_smtp_login", lambda settings, user, password: None)
+
+    exit_code = main.run_smtp_check()
+
+    assert exit_code == 0
+
+
+def test_smtp_check_fails_when_login_raises(monkeypatch, settings):
+    def _raise(settings, user, password):
+        raise RuntimeError("SMTP認証に失敗しました(535 BadCredentials)。")
+
+    monkeypatch.setattr("main.load_settings", lambda path: settings)
+    monkeypatch.setattr("main.smtp_credentials", lambda: ("smtp_user", "smtp_pass"))
+    monkeypatch.setattr("main.check_smtp_login", _raise)
+
+    exit_code = main.run_smtp_check()
+
+    assert exit_code == 1
+
+
+def test_cli_smtp_check_flag_routes_to_run_smtp_check(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["main.py", "--smtp-check"])
+    monkeypatch.setattr("main.run_smtp_check", lambda config: 0)
+    monkeypatch.setattr("main.run", lambda config: (_ for _ in ()).throw(AssertionError("runが呼ばれてはいけない")))
+
+    assert main.main() == 0
+
+
 def test_award_stats_flow_into_customer_sheet(monkeypatch, settings, fake_gc):
     """落札実績データが顧客シートの参考落札相場列に反映されることを確認する。"""
     from tests.conftest import AWARD_COL_INDEX
