@@ -49,37 +49,21 @@ def _candidate_pool() -> list[BidListing]:
     ]
 
 
-class _FakeSMTP:
-    sent: list = []
+from tests.test_delivery import FakeGmailService
 
-    def __init__(self, host, port):
-        pass
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def starttls(self):
-        pass
-
-    def login(self, user, password):
-        pass
-
-    def send_message(self, msg):
-        _FakeSMTP.sent.append(msg)
+# _patch_common がセットしたフェイクGmailサービスを、テスト側から参照するための保持箱
+_GMAIL: dict = {}
 
 
 def _patch_common(monkeypatch, settings, fake_gc, candidate_pool, award_records=None):
     monkeypatch.setattr("main.load_settings", lambda path: settings)
     monkeypatch.setattr("main.build_gspread_client", lambda: fake_gc)
-    monkeypatch.setattr("main.smtp_credentials", lambda: ("smtp_user", "smtp_pass"))
+    service = FakeGmailService()
+    _GMAIL["service"] = service
+    monkeypatch.setattr("main.build_gmail_service", lambda sender: service)
     monkeypatch.setattr("main.fetch_candidate_pool", lambda customers, settings: candidate_pool)
     # 落札実績取得はネットワークを避けてスタブ化する(既定は空=相場データなし)
     monkeypatch.setattr("main.fetch_awards", lambda settings: award_records or [])
-    _FakeSMTP.sent = []
-    monkeypatch.setattr("modules.delivery.smtplib.SMTP", _FakeSMTP)
 
 
 def test_daily_batch_completes_for_three_dummy_customers(monkeypatch, settings, fake_gc):
@@ -103,8 +87,9 @@ def test_daily_batch_completes_for_three_dummy_customers(monkeypatch, settings, 
     assert c003_rows == []  # マッチなし
 
     # 新着ありのC001・C002分のみメールが生成される(顧客への自動送信ではなく管理者宛)
-    assert len(_FakeSMTP.sent) == 2
-    assert all(msg["To"] == settings.email.admin_address for msg in _FakeSMTP.sent)
+    sent = _GMAIL["service"].store.get("sent", [])
+    assert len(sent) == 2
+    assert all(m["userId"] == "me" for m in sent)
 
     admin_log_rows = fake_gc.spreadsheets["MASTER_ID"].worksheet("実行ログ").rows
     assert len(admin_log_rows) == 1
@@ -148,33 +133,33 @@ def test_one_customer_failure_does_not_stop_others(monkeypatch, settings, fake_g
     assert "C001" in admin_log_rows[0][5]
 
 
-def test_smtp_check_succeeds_without_touching_sheets_or_matching(monkeypatch, settings):
-    # --smtp-check はGoogle Sheets/案件探索に触れず、SMTP接続+認証のみを検証する
+def test_mail_check_succeeds_without_touching_sheets_or_matching(monkeypatch, settings):
+    # --mail-check はGoogle Sheets/案件探索に触れず、Gmail送信の認証・委任のみを検証する
     monkeypatch.setattr("main.load_settings", lambda path: settings)
-    monkeypatch.setattr("main.smtp_credentials", lambda: ("smtp_user", "smtp_pass"))
-    monkeypatch.setattr("main.check_smtp_login", lambda settings, user, password: None)
+    monkeypatch.setattr("main.build_gmail_service", lambda sender: object())
+    monkeypatch.setattr("main.check_mail_auth", lambda service, settings: None)
 
-    exit_code = main.run_smtp_check()
+    exit_code = main.run_mail_check()
 
     assert exit_code == 0
 
 
-def test_smtp_check_fails_when_login_raises(monkeypatch, settings):
-    def _raise(settings, user, password):
-        raise RuntimeError("SMTP認証に失敗しました(535 BadCredentials)。")
+def test_mail_check_fails_when_auth_raises(monkeypatch, settings):
+    def _raise(service, settings):
+        raise RuntimeError("Gmail APIでの送信に失敗しました。ドメイン全体の委任...")
 
     monkeypatch.setattr("main.load_settings", lambda path: settings)
-    monkeypatch.setattr("main.smtp_credentials", lambda: ("smtp_user", "smtp_pass"))
-    monkeypatch.setattr("main.check_smtp_login", _raise)
+    monkeypatch.setattr("main.build_gmail_service", lambda sender: object())
+    monkeypatch.setattr("main.check_mail_auth", _raise)
 
-    exit_code = main.run_smtp_check()
+    exit_code = main.run_mail_check()
 
     assert exit_code == 1
 
 
-def test_cli_smtp_check_flag_routes_to_run_smtp_check(monkeypatch):
-    monkeypatch.setattr("sys.argv", ["main.py", "--smtp-check"])
-    monkeypatch.setattr("main.run_smtp_check", lambda config: 0)
+def test_cli_mail_check_flag_routes_to_run_mail_check(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["main.py", "--mail-check"])
+    monkeypatch.setattr("main.run_mail_check", lambda config: 0)
     monkeypatch.setattr("main.run", lambda config: (_ for _ in ()).throw(AssertionError("runが呼ばれてはいけない")))
 
     assert main.main() == 0

@@ -11,12 +11,12 @@
 bid-service/
 ├── main.py                       # エントリポイント(全顧客ループ)
 ├── config/
-│   ├── settings.yaml             # スプレッドシートID・重み・SMTP設定等
+│   ├── settings.yaml             # スプレッドシートID・重み・送信元アドレス等
 │   └── past_bids_reference.csv   # カバレッジ検証用の過去応札実績(要記入)
 ├── modules/
 │   ├── models.py                 # 顧客・案件・マッチング結果のPydanticモデル
 │   ├── config.py                 # settings.yamlの読込
-│   ├── auth.py                   # gspread/SMTP認証情報の読込
+│   ├── auth.py                   # gspread/Gmail API認証情報の読込
 │   ├── customer.py                # 顧客マスタ読込・バリデーション
 │   ├── search.py                 # kkj.go.jp検索APIクライアント
 │   ├── matching.py               # スコアリング・除外判定
@@ -57,11 +57,19 @@ bid-service/
 5. JSONファイルの中身をそのまま GitHub Secrets の `GOOGLE_SERVICE_ACCOUNT_JSON` に登録する(次項参照)
 6. JSON内の `"client_email"` の値を控えておく。後述のスプレッドシート共有設定で「編集者」として追加する
 
-### ② Gmailアプリパスワードの発行
+### ② Gmail送信の設定(ドメイン全体の委任)
 
-1. 送信元Googleアカウント(`d.senba@souki-cp.co.jp`)で2段階認証を有効にする
-2. https://myaccount.google.com/apppasswords でアプリパスワードを新規発行する(名前例: `bid-service`)
-3. **oracleの`SCREENER_SMTP_PASSWORD`とは別に、bid-service専用のアプリパスワードを発行する。** 同じGoogleアカウントでも用途ごとに個別のアプリパスワードを発行しておけば、片方だけを個別に失効できる
+メール送信は Gmail API(サービスアカウント + ドメイン全体の委任)で行う。Google Workspace
+は2025年にSMTPの基本認証(ユーザー名+アプリパスワード)を廃止したため、アプリパスワードは
+使わない。①のサービスアカウントに送信元ユーザーを代理送信する権限を1回だけ付与する。
+
+1. Google Cloud Console でプロジェクトの **Gmail API** を有効化する
+2. `admin.google.com` → セキュリティ → アクセスとデータ管理 → API の制御 →
+   「ドメイン全体の委任を管理」→「新しく追加」
+3. **クライアントID**: サービスアカウントJSONの `client_id` の値
+4. **OAuthスコープ**: `https://www.googleapis.com/auth/gmail.send`
+5. 承認する。これで、サービスアカウントが `settings.email.from_address` のユーザーとして
+   (パスワードなしで)メール送信できる
 
 ### ③ GitHub Secretsへの登録
 
@@ -70,10 +78,14 @@ bid-service/
 | Secret名 | 内容 |
 |---|---|
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | ①で発行したサービスアカウントJSONキーの中身全体 |
-| `BID_SERVICE_SMTP_USER` | 送信元Gmailアドレス(例: `d.senba@souki-cp.co.jp`) |
-| `BID_SERVICE_SMTP_PASSWORD` | ②で発行したアプリパスワード |
 
-スプレッドシートID等の非秘匿情報は `config/settings.yaml` に直接記載する(共有権限で保護されるため秘匿情報としては扱わない)。
+送信専用のSMTPパスワードは不要(Gmail APIの委任で送るため)。スプレッドシートID等の
+非秘匿情報は `config/settings.yaml` に直接記載する(共有権限で保護されるため秘匿情報
+としては扱わない)。
+
+送信経路が正しく設定できたかは、GitHub Actions の「Run workflow」で **mail_check**
+にチェックを入れて実行するか、ローカルで `python main.py --mail-check` を実行して確認できる
+(新着マッチの有無に関係なく、下書きを作成→即削除して委任・スコープを検証する)。
 
 ### ④ 顧客マスタスプレッドシートの準備
 
@@ -116,18 +128,17 @@ python -m venv .venv
 (正常完走・再実行時の重複なし・1社エラー時の他顧客継続)も `tests/test_main.py`
 でカバーしている。
 
-## 実際のGoogle API/SMTPを使ったE2E確認手順(受け入れ基準の最終確認)
+## 実際のGoogle API/Gmailを使ったE2E確認手順(受け入れ基準の最終確認)
 
-1. 上記セットアップ①〜④を完了させる
+1. 上記セットアップ①〜④を完了させる(②のドメイン全体の委任を含む)
 2. ダミー顧客3社分を `setup_customer_sheet.py` で追加する。**メールアドレスは
    全て自分自身(`d.senba@souki-cp.co.jp`)を指定し、本番顧客のメールアドレスは
    絶対に使わない**
-3. 手元で環境変数を設定し、直接実行する:
+3. 手元で環境変数を設定し、まず送信経路だけを検証してから本実行する:
    ```
    export GOOGLE_SERVICE_ACCOUNT_JSON="$(cat service_account.json)"
-   export BID_SERVICE_SMTP_USER="d.senba@souki-cp.co.jp"
-   export BID_SERVICE_SMTP_PASSWORD="<アプリパスワード>"
-   python main.py
+   python main.py --mail-check   # 委任・スコープの検証(下書き作成→即削除)
+   python main.py                # 本実行
    ```
 4. 顧客専用シートへの追記・管理者宛メールの着信・実行ログタブへの記録を確認する
 5. **本番の入札管理台帳(`1Zo-LNjN33-hCqk97MaS1OClTa0UXpokiK9dV8yIg-cg`)には

@@ -73,8 +73,6 @@ def settings() -> Settings:
         email=EmailSettings(
             admin_address="admin@example.jp",
             from_address="admin@example.jp",
-            smtp_host="smtp.example.jp",
-            smtp_port=587,
         ),
         company=CompanySettings(name="テスト株式会社"),
         awards=AwardsSettings(enabled=True, fiscal_year_lookback=2, timeout_seconds=60),

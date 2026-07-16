@@ -14,12 +14,12 @@ import logging
 import sys
 from datetime import datetime, timezone
 
-from modules.auth import build_gspread_client, smtp_credentials
+from modules.auth import build_gmail_service, build_gspread_client
 from modules.awards import attach_price_stats, fetch_awards
 from modules.customer import load_active_customers
 from modules.delivery import (
     append_new_matches,
-    check_smtp_login,
+    check_mail_auth,
     send_recommend_email,
     write_admin_summary,
 )
@@ -32,21 +32,21 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
-def run_smtp_check(settings_path: str = "config/settings.yaml") -> int:
-    """SMTP接続+認証のみを検証する(新着マッチの有無に依存しない)。
+def run_mail_check(settings_path: str = "config/settings.yaml") -> int:
+    """Gmail送信の認証・委任のみを検証する(新着マッチの有無に依存しない)。
 
     通常のrun()はメール送信を新着マッチがあるときしか実行しないため、
-    「実行成功」がSMTP認証の正常性を保証しない(新着0件だと未検証のまま緑になる)。
-    アプリパスワード更新後の確認は、この単体チェックで行う。
+    「実行成功」が送信経路の正常性を保証しない(新着0件だと未検証のまま緑になる)。
+    ドメイン全体の委任の設定後の確認は、この単体チェック(下書き作成→即削除)で行う。
     """
     settings = load_settings(settings_path)
-    smtp_user, smtp_password = smtp_credentials()
+    gmail_service = build_gmail_service(settings.email.from_address)
     try:
-        check_smtp_login(settings, smtp_user, smtp_password)
+        check_mail_auth(gmail_service, settings)
     except RuntimeError as exc:
-        logger.error("SMTP認証チェック: 失敗 - %s", exc)
+        logger.error("メール送信チェック: 失敗 - %s", exc)
         return 1
-    logger.info("SMTP認証チェック: 成功(%s 経由で %s としてログインできました)", settings.email.smtp_host, smtp_user)
+    logger.info("メール送信チェック: 成功(%s として Gmail API で送信できます)", settings.email.from_address)
     return 0
 
 
@@ -54,7 +54,7 @@ def run(settings_path: str = "config/settings.yaml") -> int:
     run_started_at = datetime.now(timezone.utc)
     settings = load_settings(settings_path)
     gc = build_gspread_client()
-    smtp_user, smtp_password = smtp_credentials()
+    gmail_service = build_gmail_service(settings.email.from_address)
 
     load_result = load_active_customers(gc, settings)
     customers = load_result.customers
@@ -116,7 +116,7 @@ def run(settings_path: str = "config/settings.yaml") -> int:
             # 行は既に書かれているため、サマリの総マッチ件数から漏らさない
             total_matches += len(new_matches)
             if new_matches:
-                send_recommend_email(customer, new_matches, settings, smtp_user, smtp_password)
+                send_recommend_email(customer, new_matches, settings, gmail_service)
             processed += 1
             logger.info(
                 "顧客 %s (%s): マッチ%d件中 新着%d件",
@@ -153,13 +153,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="外販版入札支援サービス 日次バッチ")
     parser.add_argument("--config", default="config/settings.yaml", help="settings.yamlのパス")
     parser.add_argument(
-        "--smtp-check",
+        "--mail-check",
         action="store_true",
-        help="SMTP接続+認証のみを検証して終了する(新着マッチの有無に依存しない)",
+        help="Gmail送信の認証・委任のみを検証して終了する(新着マッチの有無に依存しない)",
     )
     args = parser.parse_args()
-    if args.smtp_check:
-        return run_smtp_check(args.config)
+    if args.mail_check:
+        return run_mail_check(args.config)
     return run(args.config)
 
 

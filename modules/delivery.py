@@ -1,13 +1,17 @@
 """顧客専用シートへの書き込み・管理者宛メール送信・実行ログ記録。
 
 顧客への自動送信は行わない(誤配信リスクの排除)。フェーズ1では、生成した
-配信メール本文はすべて管理者(settings.email.admin_address)宛にSMTP送信し、
-管理者が内容を確認したうえで顧客へ転送する運用とする。Gmail下書き作成方式
-(顧客ごとのGmail下書き)はOAuth設定が別途必要なため、フェーズ2で検討する。
+配信メール本文はすべて管理者(settings.email.admin_address)宛にGmail APIで送信し、
+管理者が内容を確認したうえで顧客へ転送する運用とする。
+
+メール送信はGmail API(サービスアカウント + ドメイン全体の委任)で行う。
+Google Workspaceが2025年にSMTPの基本認証を廃止したため、SMTP+アプリパスワード
+方式は使えない。送信元ユーザーをimpersonateしたGmailサービスをmain.py側で
+生成し、send_recommend_email に渡す。
 """
 from __future__ import annotations
 
-import smtplib
+import base64
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -155,40 +159,56 @@ def _render_email_body(customer: Customer, matches: list[MatchResult], settings:
     return body
 
 
-def _login_or_raise(server: smtplib.SMTP, smtp_user: str, smtp_password: str) -> None:
+_DELEGATION_HINT = (
+    "Gmail APIでの送信に失敗しました。以下を確認してください: "
+    "(1) Google Cloudプロジェクトで Gmail API が有効であること、"
+    "(2) 管理コンソールの『ドメイン全体の委任』にサービスアカウントのクライアントIDと "
+    "スコープ https://www.googleapis.com/auth/gmail.send が登録されていること、"
+    "(3) settings.email.from_address が実在するWorkspaceユーザーであること。"
+)
+
+
+def _gmail_send(gmail_service, msg: MIMEMultipart) -> None:
+    """MIMEメッセージをGmail APIで送信する。委任未設定等の失敗は分かりやすく包む。"""
+    from googleapiclient.errors import HttpError
+
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
     try:
-        server.login(smtp_user, smtp_password)
-    except smtplib.SMTPAuthenticationError as exc:
-        raise RuntimeError(
-            "SMTP認証に失敗しました(535 BadCredentials)。以下を確認してください: "
-            "(1) BID_SERVICE_SMTP_PASSWORD がGoogleの『アプリパスワード』(16桁)であること"
-            "(通常のログインパスワードでは認証できません)、"
-            "(2) 送信元アカウントで2段階認証が有効であること、"
-            "(3) BID_SERVICE_SMTP_USER が送信元メールアドレスと一致していること。"
-            f" [SMTP応答: {exc.smtp_code} {exc.smtp_error!r}]"
-        ) from exc
+        gmail_service.users().messages().send(userId="me", body={"raw": raw}).execute()
+    except HttpError as exc:
+        raise RuntimeError(f"{_DELEGATION_HINT} [Gmail API応答: {exc}]") from exc
 
 
-def check_smtp_login(settings: Settings, smtp_user: str, smtp_password: str) -> None:
-    """SMTP接続+認証のみを検証する(メール送信は行わない)。
+def check_mail_auth(gmail_service, settings: Settings) -> None:
+    """Gmail送信の認証・委任を単体で検証する(実際の配信はしない)。
 
     send_recommend_email は新着マッチがあるときしか呼ばれないため、新着0件が
-    続くとパスワード切れに気づけない(「実行成功」が誤って安全と解釈される)。
-    この関数はマッチの有無に関係なく単体で認証を検証できるようにする。
+    続くと送信経路の不調に気づけない(「実行成功」が誤って安全と解釈される)。
+    この関数はマッチの有無に関係なく、下書きを作成→即削除することで、
+    委任・スコープ・送信元ユーザーの妥当性をエンドツーエンドで確認する。
     """
-    with smtplib.SMTP(settings.email.smtp_host, settings.email.smtp_port) as server:
-        server.starttls()
-        _login_or_raise(server, smtp_user, smtp_password)
+    from googleapiclient.errors import HttpError
+
+    msg = MIMEMultipart()
+    msg["Subject"] = "[bid-service] メール送信ヘルスチェック"
+    msg["From"] = settings.email.from_address
+    msg["To"] = settings.email.admin_address
+    msg.attach(MIMEText("これは送信経路の確認用の下書きです(送信されません)。", "plain", "utf-8"))
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+    try:
+        draft = gmail_service.users().drafts().create(userId="me", body={"message": {"raw": raw}}).execute()
+        gmail_service.users().drafts().delete(userId="me", id=draft["id"]).execute()
+    except HttpError as exc:
+        raise RuntimeError(f"{_DELEGATION_HINT} [Gmail API応答: {exc}]") from exc
 
 
 def send_recommend_email(
     customer: Customer,
     matches: list[MatchResult],
     settings: Settings,
-    smtp_user: str,
-    smtp_password: str,
+    gmail_service,
 ) -> None:
-    """レコメンドメールを生成し、管理者宛にSMTP送信する(顧客への自動送信は行わない)。"""
+    """レコメンドメールを生成し、管理者宛にGmail APIで送信する(顧客への自動送信は行わない)。"""
     body = _render_email_body(customer, matches, settings)
     notice = (
         f"[本メールは管理者確認用です。顧客への自動送信は行っていません。"
@@ -202,10 +222,7 @@ def send_recommend_email(
     msg["To"] = settings.email.admin_address
     msg.attach(MIMEText(notice + body, "plain", "utf-8"))
 
-    with smtplib.SMTP(settings.email.smtp_host, settings.email.smtp_port) as server:
-        server.starttls()
-        _login_or_raise(server, smtp_user, smtp_password)
-        server.send_message(msg)
+    _gmail_send(gmail_service, msg)
 
 
 def write_admin_summary(

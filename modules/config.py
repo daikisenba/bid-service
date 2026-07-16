@@ -36,10 +36,11 @@ class MatchingSettings(BaseModel):
 
 
 class EmailSettings(BaseModel):
+    # 送信はGmail API(サービスアカウント+ドメイン全体の委任)で行う。
+    # from_address は「送信元」であると同時に、委任でimpersonateする実在の
+    # Workspaceユーザーでもある(この人として送る)。
     admin_address: str
     from_address: str
-    smtp_host: str
-    smtp_port: int
     # Stripeカスタマーポータル(解約・カード変更)。空文字のうちはフッターに
     # リンク行を出力しない。なお配信条件の変更は「メール返信」方式のため
     # 専用URLは持たない(フッターに固定の案内文を常時出力する)。

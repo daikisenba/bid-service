@@ -1,41 +1,25 @@
-"""SMTP認証情報の正規化テスト。
+"""サービスアカウント情報の読み込みテスト。
 
-535 BadCredentials の典型原因(アプリパスワードの空白・改行混入)を、
-smtp_credentials() が正規化して吸収することを保証する。
+Gmail送信は「サービスアカウント + ドメイン全体の委任」方式に移行したため、
+SMTPのユーザー名/アプリパスワードは扱わない。ここでは環境変数
+GOOGLE_SERVICE_ACCOUNT_JSON の読み込みと、未設定時のエラーを検証する。
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from modules.auth import smtp_credentials
+from modules.auth import _service_account_info
 
 
-def test_strips_spaces_from_app_password(monkeypatch):
-    monkeypatch.setenv("BID_SERVICE_SMTP_USER", "d.senba@souki-cp.co.jp")
-    # Gmailは「xxxx xxxx xxxx xxxx」と空白区切りで表示する
-    monkeypatch.setenv("BID_SERVICE_SMTP_PASSWORD", "abcd efgh ijkl mnop")
-    user, password = smtp_credentials()
-    assert user == "d.senba@souki-cp.co.jp"
-    assert password == "abcdefghijklmnop"
+def test_service_account_info_parses_env(monkeypatch):
+    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON", json.dumps({"client_email": "svc@example.iam"}))
+    info = _service_account_info()
+    assert info["client_email"] == "svc@example.iam"
 
 
-def test_strips_leading_trailing_whitespace_and_newline(monkeypatch):
-    monkeypatch.setenv("BID_SERVICE_SMTP_USER", "  d.senba@souki-cp.co.jp\n")
-    monkeypatch.setenv("BID_SERVICE_SMTP_PASSWORD", "  abcdefghijklmnop\n")
-    user, password = smtp_credentials()
-    assert user == "d.senba@souki-cp.co.jp"
-    assert password == "abcdefghijklmnop"
-
-
-def test_raises_when_missing(monkeypatch):
-    monkeypatch.delenv("BID_SERVICE_SMTP_USER", raising=False)
-    monkeypatch.delenv("BID_SERVICE_SMTP_PASSWORD", raising=False)
+def test_service_account_info_raises_when_missing(monkeypatch):
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_JSON", raising=False)
     with pytest.raises(RuntimeError):
-        smtp_credentials()
-
-
-def test_raises_when_password_is_only_whitespace(monkeypatch):
-    monkeypatch.setenv("BID_SERVICE_SMTP_USER", "d.senba@souki-cp.co.jp")
-    monkeypatch.setenv("BID_SERVICE_SMTP_PASSWORD", "    ")
-    with pytest.raises(RuntimeError):
-        smtp_credentials()
+        _service_account_info()

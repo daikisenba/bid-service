@@ -1,5 +1,5 @@
 # bid-service 設定ファイル
-# 秘匿情報(サービスアカウントJSON・SMTPパスワード等)は環境変数(GitHub Secrets)側に置き、
+# 秘匿情報(サービスアカウントJSON)は環境変数(GitHub Secrets)側に置き、
 # ここには書かない。スプレッドシートIDは秘匿情報として扱わない(共有権限で保護する)。
 
 google:
@@ -37,11 +37,11 @@ matching:
     - "契約金額[^0-9]{0,10}([0-9,]+)\\s*円"
 
 email:
-  # フェーズ1は自動送信禁止のため、常にこの管理者アドレス宛に送る
+  # フェーズ1は自動送信禁止のため、常にこの管理者アドレス宛に送る。
+  # 送信はGmail API(サービスアカウント+ドメイン全体の委任)。from_address は
+  # 委任でimpersonateする実在のWorkspaceユーザー(この人として送る)。
   admin_address: "d.senba@souki-cp.co.jp"
   from_address: "d.senba@souki-cp.co.jp"
-  smtp_host: "smtp.gmail.com"
-  smtp_port: 587
   # Stripeカスタマーポータル(解約・カード変更)。フッターにリンクとして表示される。
   # ※配信条件の変更は「メール返信」方式(フッターに固定の案内文を常時出力)のため専用URLなし
   customer_portal_url: "https://billing.stripe.com/p/login/14AaER5s3cOk2FM4cX67S00"

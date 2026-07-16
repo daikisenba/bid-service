@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import base64
+import email
+import json
 from datetime import datetime, timezone
+from email.header import decode_header, make_header
 
-import smtplib
-
+import httplib2
 import pytest
+from googleapiclient.errors import HttpError
 
 from modules.delivery import (
     append_new_matches,
-    check_smtp_login,
+    check_mail_auth,
     send_recommend_email,
     write_admin_summary,
 )
@@ -22,6 +26,76 @@ from modules.models import (
     SkipReason,
 )
 from tests.conftest import AWARD_COL_INDEX, STATUS_COL_INDEX
+
+
+def _http_error(status: int = 403, message: str = "delegation denied") -> HttpError:
+    resp = httplib2.Response({"status": status})
+    resp.reason = "Forbidden"
+    return HttpError(resp, json.dumps({"error": {"message": message}}).encode())
+
+
+class _FakeExecutable:
+    def __init__(self, result, error: HttpError | None):
+        self._result = result
+        self._error = error
+
+    def execute(self):
+        if self._error is not None:
+            raise self._error
+        return self._result
+
+
+class _FakeMessages:
+    def __init__(self, store, error):
+        self._store, self._error = store, error
+
+    def send(self, userId, body):
+        self._store.setdefault("sent", []).append({"userId": userId, "body": body})
+        return _FakeExecutable({"id": "msg1"}, self._error)
+
+
+class _FakeDrafts:
+    def __init__(self, store, error):
+        self._store, self._error = store, error
+
+    def create(self, userId, body):
+        self._store.setdefault("drafts_created", []).append({"userId": userId, "body": body})
+        return _FakeExecutable({"id": "draft1"}, self._error)
+
+    def delete(self, userId, id):
+        self._store.setdefault("drafts_deleted", []).append(id)
+        return _FakeExecutable("", None)
+
+
+class _FakeUsers:
+    def __init__(self, store, error):
+        self._store, self._error = store, error
+
+    def messages(self):
+        return _FakeMessages(self._store, self._error)
+
+    def drafts(self):
+        return _FakeDrafts(self._store, self._error)
+
+
+class FakeGmailService:
+    """Gmail API サービスの最小フェイク(users().messages()/drafts() をサポート)。"""
+
+    def __init__(self, error: HttpError | None = None):
+        self.store: dict = {}
+        self._error = error
+
+    def users(self):
+        return _FakeUsers(self.store, self._error)
+
+
+def _decode_sent_body(service: FakeGmailService) -> str:
+    raw = service.store["sent"][0]["body"]["raw"]
+    msg = email.message_from_bytes(base64.urlsafe_b64decode(raw))
+    for part in msg.walk():
+        if part.get_content_type() == "text/plain":
+            return part.get_payload(decode=True).decode("utf-8")
+    raise AssertionError("text/plain パートが見つかりません")
 
 
 def _customer(output_sheet_id: str = "SHEET_C001") -> Customer:
@@ -103,73 +177,39 @@ def test_append_new_matches_dedups_by_url_on_second_run(fake_gc, settings):
     assert len(ws.rows) == 1  # 重複追記されていない
 
 
-def test_render_and_send_recommend_email(monkeypatch, settings):
+def test_render_and_send_recommend_email(settings):
     customer = _customer()
-    sent_messages = []
+    service = FakeGmailService()
 
-    class FakeSMTP:
-        def __init__(self, host, port):
-            assert host == settings.email.smtp_host
-            assert port == settings.email.smtp_port
+    send_recommend_email(customer, [_match()], settings, service)
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-        def starttls(self):
-            pass
-
-        def login(self, user, password):
-            assert user == "smtp_user"
-            assert password == "smtp_pass"
-
-        def send_message(self, msg):
-            sent_messages.append(msg)
-
-    monkeypatch.setattr("modules.delivery.smtplib.SMTP", FakeSMTP)
-
-    send_recommend_email(customer, [_match()], settings, "smtp_user", "smtp_pass")
-
-    assert len(sent_messages) == 1
-    msg = sent_messages[0]
+    sent = service.store["sent"]
+    assert len(sent) == 1
+    assert sent[0]["userId"] == "me"
+    msg = email.message_from_bytes(base64.urlsafe_b64decode(sent[0]["body"]["raw"]))
     assert msg["To"] == settings.email.admin_address
-    assert customer.company_name in msg["Subject"]
-    body = msg.get_payload()[0].get_payload(decode=True).decode("utf-8")
+    subject = str(make_header(decode_header(msg["Subject"])))
+    assert customer.company_name in subject
+    body = _decode_sent_body(service)
     assert "自動送信は行っていません" in body
     assert customer.contact_email in body
     assert "消耗品の購入" in body
 
 
-def _capture_email_body(monkeypatch, settings, matches) -> str:
-    sent = []
-
-    class FakeSMTP:
-        def __init__(self, host, port):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-        def starttls(self):
-            pass
-
-        def login(self, user, password):
-            pass
-
-        def send_message(self, msg):
-            sent.append(msg)
-
-    monkeypatch.setattr("modules.delivery.smtplib.SMTP", FakeSMTP)
-    send_recommend_email(_customer(), matches, settings, "u", "p")
-    return sent[0].get_payload()[0].get_payload(decode=True).decode("utf-8")
+def test_send_recommend_email_wraps_delegation_error(settings):
+    # 委任未設定などで Gmail API が失敗したら、分かりやすい RuntimeError に包む
+    service = FakeGmailService(error=_http_error(403, "Delegation denied"))
+    with pytest.raises(RuntimeError, match="ドメイン全体の委任"):
+        send_recommend_email(_customer(), [_match()], settings, service)
 
 
-def test_email_includes_award_stats_and_source_note(monkeypatch, settings):
+def _capture_email_body(settings, matches) -> str:
+    service = FakeGmailService()
+    send_recommend_email(_customer(), matches, settings, service)
+    return _decode_sent_body(service)
+
+
+def test_email_includes_award_stats_and_source_note(settings):
     stats = PriceStats(
         count=5,
         median=248000,
@@ -177,21 +217,21 @@ def test_email_includes_award_stats_and_source_note(monkeypatch, settings):
         p75=310000,
         examples=[{"project_name": "文具一式の購入", "amount": 250000, "winner": "〇〇商事"}],
     )
-    body = _capture_email_body(monkeypatch, settings, [_match(price_stats=stats)])
+    body = _capture_email_body(settings, [_match(price_stats=stats)])
     assert "参考落札相場: 同種5件 中央値¥248,000" in body
     assert "実例: 文具一式の購入 ¥250,000（〇〇商事）" in body
     assert "出典: 調達ポータル(デジタル庁)落札実績オープンデータ" in body
 
 
-def test_email_omits_source_note_when_no_award_data(monkeypatch, settings):
-    body = _capture_email_body(monkeypatch, settings, [_match(price_stats=PriceStats(count=0))])
+def test_email_omits_source_note_when_no_award_data(settings):
+    body = _capture_email_body(settings, [_match(price_stats=PriceStats(count=0))])
     assert "参考落札相場" not in body
     assert "出典:" not in body
 
 
-def test_email_footer_always_includes_reply_guidance(monkeypatch, settings):
+def test_email_footer_always_includes_reply_guidance(settings):
     # 配信条件の変更は「メール返信」方式。案内文はURL設定の有無に関わらず常に出力される
-    body = _capture_email_body(monkeypatch, settings, [_match()])
+    body = _capture_email_body(settings, [_match()])
     assert "【各種お手続き】" in body
     assert "このメールにそのままご返信ください" in body
     # 1往復で完了させるための返信例と反映タイミングの目安も載せる
@@ -199,52 +239,32 @@ def test_email_footer_always_includes_reply_guidance(monkeypatch, settings):
     assert "翌営業日までに" in body
 
 
-def test_email_footer_includes_portal_link_when_url_set(monkeypatch, settings):
+def test_email_footer_includes_portal_link_when_url_set(settings):
     settings.email.customer_portal_url = "https://billing.stripe.com/p/login/test123"
-    body = _capture_email_body(monkeypatch, settings, [_match()])
+    body = _capture_email_body(settings, [_match()])
     assert "・配信の解約・お支払い方法の変更: https://billing.stripe.com/p/login/test123" in body
 
 
-def test_email_footer_omits_portal_link_when_url_empty(monkeypatch, settings):
+def test_email_footer_omits_portal_link_when_url_empty(settings):
     # ポータルURL未設定でも条件変更の案内は出るが、解約リンク行は出ない(空リンク防止)
-    body = _capture_email_body(monkeypatch, settings, [_match()])
+    body = _capture_email_body(settings, [_match()])
     assert "このメールにそのままご返信ください" in body
     assert "解約・お支払い方法の変更" not in body
 
 
-class _FakeSMTPForLoginCheck:
-    """接続+starttls+loginのみを模擬する(send_messageは呼ばれない想定)。"""
-
-    def __init__(self, host, port):
-        self.host = host
-        self.port = port
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def starttls(self):
-        pass
-
-    def login(self, user, password):
-        if password != "correct_pass":
-            raise smtplib.SMTPAuthenticationError(535, b"5.7.8 Username and Password not accepted")
-
-    def send_message(self, msg):  # pragma: no cover - 呼ばれないことをテストで確認する
-        raise AssertionError("check_smtp_login はメールを送信してはならない")
+def test_check_mail_auth_creates_and_deletes_draft_without_sending(settings):
+    # 認証チェックは下書きを作って即削除するだけ。実際の送信(messages.send)はしない
+    service = FakeGmailService()
+    check_mail_auth(service, settings)
+    assert len(service.store.get("drafts_created", [])) == 1
+    assert service.store.get("drafts_deleted") == ["draft1"]
+    assert "sent" not in service.store  # 送信は発生しない
 
 
-def test_check_smtp_login_succeeds_without_sending_mail(monkeypatch, settings):
-    monkeypatch.setattr("modules.delivery.smtplib.SMTP", _FakeSMTPForLoginCheck)
-    check_smtp_login(settings, "smtp_user", "correct_pass")  # 例外が出なければOK
-
-
-def test_check_smtp_login_raises_helpful_error_on_bad_credentials(monkeypatch, settings):
-    monkeypatch.setattr("modules.delivery.smtplib.SMTP", _FakeSMTPForLoginCheck)
-    with pytest.raises(RuntimeError, match="535 BadCredentials"):
-        check_smtp_login(settings, "smtp_user", "wrong_pass")
+def test_check_mail_auth_raises_helpful_error_on_delegation_failure(settings):
+    service = FakeGmailService(error=_http_error(403, "unauthorized_client"))
+    with pytest.raises(RuntimeError, match="ドメイン全体の委任"):
+        check_mail_auth(service, settings)
 
 
 def test_write_admin_summary_appends_row(fake_gc, settings):
