@@ -37,7 +37,7 @@ def run_mail_check(settings_path: str = "config/settings.yaml") -> int:
 
     通常のrun()はメール送信を新着マッチがあるときしか実行しないため、
     「実行成功」が送信経路の正常性を保証しない(新着0件だと未検証のまま緑になる)。
-    ドメイン全体の委任の設定後の確認は、この単体チェック(下書き作成→即削除)で行う。
+    ドメイン全体の委任の設定後の確認は、この単体チェック(管理者=自分宛にテスト送信)で行う。
     """
     settings = load_settings(settings_path)
     gmail_service = build_gmail_service(settings.email.from_address)

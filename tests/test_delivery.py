@@ -252,17 +252,22 @@ def test_email_footer_omits_portal_link_when_url_empty(settings):
     assert "解約・お支払い方法の変更" not in body
 
 
-def test_check_mail_auth_creates_and_deletes_draft_without_sending(settings):
-    # 認証チェックは下書きを作って即削除するだけ。実際の送信(messages.send)はしない
+def test_check_mail_auth_sends_healthcheck_via_messages_send(settings):
+    # gmail.send スコープで通る messages.send を使い、管理者(自分)宛に1通送る
     service = FakeGmailService()
     check_mail_auth(service, settings)
-    assert len(service.store.get("drafts_created", [])) == 1
-    assert service.store.get("drafts_deleted") == ["draft1"]
-    assert "sent" not in service.store  # 送信は発生しない
+    sent = service.store.get("sent", [])
+    assert len(sent) == 1
+    assert sent[0]["userId"] == "me"
+    assert "drafts_created" not in service.store  # 下書きAPIは使わない(別スコープ回避)
+    msg = email.message_from_bytes(base64.urlsafe_b64decode(sent[0]["body"]["raw"]))
+    assert msg["To"] == settings.email.admin_address
+    subject = str(make_header(decode_header(msg["Subject"])))
+    assert "ヘルスチェック" in subject
 
 
 def test_check_mail_auth_raises_helpful_error_on_delegation_failure(settings):
-    service = FakeGmailService(error=_http_error(403, "unauthorized_client"))
+    service = FakeGmailService(error=_http_error(403, "insufficientPermissions"))
     with pytest.raises(RuntimeError, match="ドメイン全体の委任"):
         check_mail_auth(service, settings)
 

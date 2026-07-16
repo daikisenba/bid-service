@@ -180,26 +180,28 @@ def _gmail_send(gmail_service, msg: MIMEMultipart) -> None:
 
 
 def check_mail_auth(gmail_service, settings: Settings) -> None:
-    """Gmail送信の認証・委任を単体で検証する(実際の配信はしない)。
+    """Gmail送信の認証・委任を単体で検証する(管理者宛にヘルスチェックメールを1通送る)。
 
     send_recommend_email は新着マッチがあるときしか呼ばれないため、新着0件が
     続くと送信経路の不調に気づけない(「実行成功」が誤って安全と解釈される)。
-    この関数はマッチの有無に関係なく、下書きを作成→即削除することで、
-    委任・スコープ・送信元ユーザーの妥当性をエンドツーエンドで確認する。
+    この関数はマッチの有無に関係なく、本番と同じ messages.send 経路で
+    管理者(自分)宛にテストメールを送り、委任・スコープ・送信元ユーザーを検証する。
+    gmail.send スコープが許可するのは messages.send のみで、下書き作成
+    (drafts.create)は別スコープが要るため、あえて実送信で確認する。
     """
-    from googleapiclient.errors import HttpError
-
     msg = MIMEMultipart()
-    msg["Subject"] = "[bid-service] メール送信ヘルスチェック"
+    msg["Subject"] = "[bid-service] メール送信ヘルスチェック(自動送信)"
     msg["From"] = settings.email.from_address
     msg["To"] = settings.email.admin_address
-    msg.attach(MIMEText("これは送信経路の確認用の下書きです(送信されません)。", "plain", "utf-8"))
-    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
-    try:
-        draft = gmail_service.users().drafts().create(userId="me", body={"message": {"raw": raw}}).execute()
-        gmail_service.users().drafts().delete(userId="me", id=draft["id"]).execute()
-    except HttpError as exc:
-        raise RuntimeError(f"{_DELEGATION_HINT} [Gmail API応答: {exc}]") from exc
+    msg.attach(
+        MIMEText(
+            "これは bid-service の送信経路の確認用に自動送信されたメールです。"
+            "このメールが届いていれば、Gmail API での配信基盤は正常です。",
+            "plain",
+            "utf-8",
+        )
+    )
+    _gmail_send(gmail_service, msg)
 
 
 def send_recommend_email(

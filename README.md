@@ -85,7 +85,7 @@ bid-service/
 
 送信経路が正しく設定できたかは、GitHub Actions の「Run workflow」で **mail_check**
 にチェックを入れて実行するか、ローカルで `python main.py --mail-check` を実行して確認できる
-(新着マッチの有無に関係なく、下書きを作成→即削除して委任・スコープを検証する)。
+(新着マッチの有無に関係なく、管理者=自分宛にテストメールを1通送って委任・スコープを検証する)。
 
 ### ④ 顧客マスタスプレッドシートの準備
 
@@ -137,7 +137,7 @@ python -m venv .venv
 3. 手元で環境変数を設定し、まず送信経路だけを検証してから本実行する:
    ```
    export GOOGLE_SERVICE_ACCOUNT_JSON="$(cat service_account.json)"
-   python main.py --mail-check   # 委任・スコープの検証(下書き作成→即削除)
+   python main.py --mail-check   # 委任・スコープの検証(自分宛にテスト送信)
    python main.py                # 本実行
    ```
 4. 顧客専用シートへの追記・管理者宛メールの着信・実行ログタブへの記録を確認する
