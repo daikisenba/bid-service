@@ -19,6 +19,7 @@ from modules.awards import attach_price_stats, fetch_awards
 from modules.customer import load_active_customers
 from modules.delivery import (
     append_new_matches,
+    build_recommend_email,
     check_mail_auth,
     send_recommend_email,
     write_admin_summary,
@@ -50,11 +51,39 @@ def run_mail_check(settings_path: str = "config/settings.yaml") -> int:
     return 0
 
 
-def run(settings_path: str = "config/settings.yaml") -> int:
+def _print_dry_run_email(customer, matches, settings) -> None:
+    """dry-runで、本番とまったく同じ組み立て経路で作ったメールを標準出力に出す。"""
+    msg = build_recommend_email(customer, matches, settings)
+    body = msg.get_payload(0).get_payload(decode=True).decode("utf-8")
+    print("\n" + "=" * 72)
+    print(f"To:      {msg['To']}")
+    print(f"Bcc:     {msg['Bcc'] or '(なし)'}")
+    print(f"From:    {msg['From']}")
+    print(f"Subject: {msg['Subject']}")
+    print("-" * 72)
+    print(body)
+    print("=" * 72 + "\n")
+
+
+def run(settings_path: str = "config/settings.yaml", *, dry_run: bool = False) -> int:
+    """日次バッチ本体。
+
+    dry_run=True のときは副作用のある処理をすべて止め、送信されるはずだった
+    メールを標準出力に表示する(シート追記・メール送信・実行ログ記録を行わない)。
+    顧客への自動送信(auto_send_to_customer)を有効にすると人の目が入らなくなるため、
+    マッチング条件を変えた日はこれで出力を確認してから本番を迎えること。
+    """
     run_started_at = datetime.now(timezone.utc)
     settings = load_settings(settings_path)
     gc = build_gspread_client()
-    gmail_service = build_gmail_service(settings.email.from_address)
+    # dry-runではGmailに触れない(認証だけ通して送らない、ではなく経路ごと使わない)
+    gmail_service = None if dry_run else build_gmail_service(settings.email.from_address)
+    if dry_run:
+        logger.info(
+            "*** DRY-RUN: シート追記・メール送信・実行ログ記録は行いません "
+            "(auto_send_to_customer=%s) ***",
+            settings.email.auto_send_to_customer,
+        )
 
     load_result = load_active_customers(gc, settings)
     customers = load_result.customers
@@ -64,30 +93,32 @@ def run(settings_path: str = "config/settings.yaml") -> int:
 
     if not customers:
         logger.warning("有効な顧客がいないため、案件探索をスキップします。")
-        write_admin_summary(
-            gc,
-            settings,
-            run_started_at=run_started_at,
-            processed=0,
-            skipped=skipped,
-            total_matches=0,
-            errors=[],
-        )
+        if not dry_run:
+            write_admin_summary(
+                gc,
+                settings,
+                run_started_at=run_started_at,
+                processed=0,
+                skipped=skipped,
+                total_matches=0,
+                errors=[],
+            )
         return 0
 
     try:
         candidate_pool = fetch_candidate_pool(customers, settings)
     except Exception as exc:  # noqa: BLE001 - 全体を止めず管理者ログに記録する
         logger.error("案件探索(kkj.go.jp API)に失敗しました: %s", exc)
-        write_admin_summary(
-            gc,
-            settings,
-            run_started_at=run_started_at,
-            processed=0,
-            skipped=skipped,
-            total_matches=0,
-            errors=[CustomerError(customer_id="(全体)", error=f"案件探索失敗: {exc}")],
-        )
+        if not dry_run:
+            write_admin_summary(
+                gc,
+                settings,
+                run_started_at=run_started_at,
+                processed=0,
+                skipped=skipped,
+                total_matches=0,
+                errors=[CustomerError(customer_id="(全体)", error=f"案件探索失敗: {exc}")],
+            )
         return 1
 
     logger.info("案件プール取得: %d件", len(candidate_pool))
@@ -111,12 +142,15 @@ def run(settings_path: str = "config/settings.yaml") -> int:
             matches = match_customer(customer, candidate_pool, settings)
             if award_records is not None:
                 attach_price_stats(customer, matches, award_records)
-            new_matches = append_new_matches(gc, customer, matches, settings)
+            new_matches = append_new_matches(gc, customer, matches, settings, dry_run=dry_run)
             # シートに追記された時点でカウントする。この後のメール送信が失敗しても
             # 行は既に書かれているため、サマリの総マッチ件数から漏らさない
             total_matches += len(new_matches)
             if new_matches:
-                send_recommend_email(customer, new_matches, settings, gmail_service)
+                if dry_run:
+                    _print_dry_run_email(customer, new_matches, settings)
+                else:
+                    send_recommend_email(customer, new_matches, settings, gmail_service)
             processed += 1
             logger.info(
                 "顧客 %s (%s): マッチ%d件中 新着%d件",
@@ -130,15 +164,16 @@ def run(settings_path: str = "config/settings.yaml") -> int:
             errors.append(CustomerError(customer_id=customer.customer_id, error=str(exc)))
             continue
 
-    write_admin_summary(
-        gc,
-        settings,
-        run_started_at=run_started_at,
-        processed=processed,
-        skipped=skipped,
-        total_matches=total_matches,
-        errors=errors,
-    )
+    if not dry_run:
+        write_admin_summary(
+            gc,
+            settings,
+            run_started_at=run_started_at,
+            processed=processed,
+            skipped=skipped,
+            total_matches=total_matches,
+            errors=errors,
+        )
     logger.info(
         "実行完了: 処理%d件 / スキップ%d件 / 新着マッチ%d件 / エラー%d件",
         processed,
@@ -157,10 +192,15 @@ def main() -> int:
         action="store_true",
         help="Gmail送信の認証・委任のみを検証して終了する(新着マッチの有無に依存しない)",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="送信されるメールを表示するだけで、シート追記・メール送信・実行ログ記録を行わない",
+    )
     args = parser.parse_args()
     if args.mail_check:
         return run_mail_check(args.config)
-    return run(args.config)
+    return run(args.config, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

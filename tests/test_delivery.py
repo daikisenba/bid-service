@@ -11,6 +11,7 @@ import pytest
 from googleapiclient.errors import HttpError
 
 from modules.delivery import (
+    RECOMMEND_TAB,
     append_new_matches,
     check_mail_auth,
     send_recommend_email,
@@ -291,3 +292,51 @@ def test_write_admin_summary_appends_row(fake_gc, settings):
     assert row[3] == 3  # 総マッチ件数
     assert row[4] == 1  # エラー件数
     assert "C999" in row[5] and "C998" in row[5]
+
+
+def _sent_headers(service: FakeGmailService) -> email.message.Message:
+    raw = service.store["sent"][0]["body"]["raw"]
+    return email.message_from_bytes(base64.urlsafe_b64decode(raw))
+
+
+def test_recommend_email_goes_to_admin_when_auto_send_disabled(settings):
+    # 既定(False)は従来どおり管理者宛のみ。顧客アドレスは宛先に入らない
+    settings.email.auto_send_to_customer = False
+    service = FakeGmailService()
+    send_recommend_email(_customer(), [_match()], settings, service)
+
+    msg = _sent_headers(service)
+    assert msg["To"] == settings.email.admin_address
+    assert msg["Bcc"] is None
+    assert "自動送信は行っていません" in _decode_sent_body(service)
+
+
+def test_recommend_email_goes_to_customer_with_admin_bcc_when_enabled(settings):
+    # Trueなら顧客へ直送し、管理者にはBccで控えが残る(何が社外に出たか追跡できる)
+    settings.email.auto_send_to_customer = True
+    service = FakeGmailService()
+    send_recommend_email(_customer(), [_match()], settings, service)
+
+    msg = _sent_headers(service)
+    assert msg["To"] == "sato@example.jp"
+    assert msg["Bcc"] == settings.email.admin_address
+    # 顧客宛には管理者向けの但し書きを絶対に含めない
+    assert "自動送信は行っていません" not in _decode_sent_body(service)
+    assert "転送してください" not in _decode_sent_body(service)
+
+
+def test_auto_send_fails_loudly_when_customer_email_missing(settings):
+    # 宛先が空のまま送信を試みると、Gmail側で曖昧に失敗する前にここで止める
+    settings.email.auto_send_to_customer = True
+    customer = _customer().model_copy(update={"contact_email": ""})
+    with pytest.raises(RuntimeError, match="contact_email"):
+        send_recommend_email(customer, [_match()], settings, FakeGmailService())
+
+
+def test_dry_run_does_not_write_to_sheet_but_reports_new_matches(fake_gc, settings):
+    # dry-runでは重複判定まで行い、シートへの追記はしない
+    customer = _customer()
+    new = append_new_matches(fake_gc, customer, [_match()], settings, dry_run=True)
+    assert len(new) == 1
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet(RECOMMEND_TAB)
+    assert ws.rows == []

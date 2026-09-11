@@ -1,8 +1,11 @@
 """顧客専用シートへの書き込み・管理者宛メール送信・実行ログ記録。
 
-顧客への自動送信は行わない(誤配信リスクの排除)。フェーズ1では、生成した
-配信メール本文はすべて管理者(settings.email.admin_address)宛にGmail APIで送信し、
-管理者が内容を確認したうえで顧客へ転送する運用とする。
+顧客へ自動送信するかは settings.email.auto_send_to_customer で切り替える。
+既定(False)では、生成した配信メール本文はすべて管理者(settings.email.admin_address)
+宛にGmail APIで送信し、管理者が内容を確認したうえで顧客へ転送する運用とする。
+Trueにすると顧客へ直接送信し、管理者にはBccで控えが届く(2026-09-11に1社目の
+無料トライアル開始に伴い有効化。誤配信リスクを管理者確認で吸収しなくなるため、
+マッチング条件の変更時は事前に --dry-run で出力を確認すること)。
 
 メール送信はGmail API(サービスアカウント + ドメイン全体の委任)で行う。
 Google Workspaceが2025年にSMTPの基本認証を廃止したため、SMTP+アプリパスワード
@@ -67,16 +70,25 @@ def _existing_urls(ws: gspread.Worksheet) -> set[str]:
 
 
 def append_new_matches(
-    gc: gspread.Client, customer: Customer, matches: list[MatchResult], settings: Settings
+    gc: gspread.Client,
+    customer: Customer,
+    matches: list[MatchResult],
+    settings: Settings,
+    *,
+    dry_run: bool = False,
 ) -> list[MatchResult]:
-    """マッチ結果を顧客専用シートに追記する。案件URLで重複チェックし、新規分のみ返す。"""
+    """マッチ結果を顧客専用シートに追記する。案件URLで重複チェックし、新規分のみ返す。
+
+    dry_run=True のときは重複チェックまで行い、シートへの追記は行わない
+    (本番と同じ新着判定の結果だけを返す)。
+    """
     sh = gc.open_by_key(customer.output_sheet_id)
     ws = sh.worksheet(RECOMMEND_TAB)
     existing = _existing_urls(ws)
 
     new_matches = [m for m in matches if m.listing.dedup_key not in existing]
-    if not new_matches:
-        return []
+    if not new_matches or dry_run:
+        return new_matches
 
     rows = [
         [
@@ -204,27 +216,55 @@ def check_mail_auth(gmail_service, settings: Settings) -> None:
     _gmail_send(gmail_service, msg)
 
 
+def build_recommend_email(
+    customer: Customer, matches: list[MatchResult], settings: Settings
+) -> MIMEMultipart:
+    """送信するレコメンドメールを組み立てて返す(送信はしない)。
+
+    送信経路(send_recommend_email)と事前確認(--dry-run)が同じ関数で宛先・本文を
+    組み立てるようにしてある。プレビューと本番で中身がズレると確認の意味がないため。
+
+    settings.email.auto_send_to_customer が
+      False(既定): 管理者宛にのみ送る。管理者が内容を確認して顧客へ転送する。
+      True       : 顧客(contact_email)へ直接送り、管理者にはBccで同じものを送る。
+                   Bccを必ず付けるのは、自動送信に切り替えても「何が社外に出たか」を
+                   管理者が事後に確認できる状態を保つため(送信済みの控えが手元に残る)。
+    """
+    body = _render_email_body(customer, matches, settings)
+
+    msg = MIMEMultipart()
+    msg["Subject"] = f"【入札案件レコメンド】{customer.company_name}様 - {len(matches)}件"
+    msg["From"] = settings.email.from_address
+
+    if settings.email.auto_send_to_customer:
+        if not customer.contact_email:
+            raise RuntimeError(
+                f"顧客 {customer.customer_id} に contact_email が未設定のため自動送信できません。"
+                "顧客マスタのメールアドレス列を確認してください。"
+            )
+        msg["To"] = customer.contact_email
+        msg["Bcc"] = settings.email.admin_address
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+    else:
+        notice = (
+            f"[本メールは管理者確認用です。顧客への自動送信は行っていません。"
+            f"内容を確認のうえ、{customer.contact_name}様({customer.contact_email})へ"
+            f"転送してください。]\n\n"
+        )
+        msg["To"] = settings.email.admin_address
+        msg.attach(MIMEText(notice + body, "plain", "utf-8"))
+
+    return msg
+
+
 def send_recommend_email(
     customer: Customer,
     matches: list[MatchResult],
     settings: Settings,
     gmail_service,
 ) -> None:
-    """レコメンドメールを生成し、管理者宛にGmail APIで送信する(顧客への自動送信は行わない)。"""
-    body = _render_email_body(customer, matches, settings)
-    notice = (
-        f"[本メールは管理者確認用です。顧客への自動送信は行っていません。"
-        f"内容を確認のうえ、{customer.contact_name}様({customer.contact_email})へ"
-        f"転送してください。]\n\n"
-    )
-
-    msg = MIMEMultipart()
-    msg["Subject"] = f"【入札案件レコメンド】{customer.company_name}様 - {len(matches)}件"
-    msg["From"] = settings.email.from_address
-    msg["To"] = settings.email.admin_address
-    msg.attach(MIMEText(notice + body, "plain", "utf-8"))
-
-    _gmail_send(gmail_service, msg)
+    """レコメンドメールを生成してGmail APIで送信する(宛先の決定は build_recommend_email)。"""
+    _gmail_send(gmail_service, build_recommend_email(customer, matches, settings))
 
 
 def write_admin_summary(

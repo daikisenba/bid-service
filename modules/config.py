@@ -45,6 +45,11 @@ class EmailSettings(BaseModel):
     # リンク行を出力しない。なお配信条件の変更は「メール返信」方式のため
     # 専用URLは持たない(フッターに固定の案内文を常時出力する)。
     customer_portal_url: str = ""
+    # True にすると顧客(contact_email)へ直接自動送信し、管理者にはBccで同じものが
+    # 届く。False(既定)だと管理者宛にだけ送られ、管理者が内容を確認して手で転送する。
+    # 既定をFalseにしているのは、設定を1つ書き忘れただけで社外へ自動送信が始まる
+    # 事故を防ぐため(明示的に有効化したときだけ自動送信になる)。
+    auto_send_to_customer: bool = False
 
 
 class CompanySettings(BaseModel):

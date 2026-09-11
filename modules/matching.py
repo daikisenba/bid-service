@@ -25,8 +25,21 @@ def _contains_any(haystack: str, needles: list[str]) -> list[str]:
     return [n for n in needles if n and n.lower() in lowered]
 
 
-def _searchable_text(listing: BidListing) -> str:
-    return " ".join(filter(None, [listing.project_name, listing.project_description]))
+def _exclusion_text(listing: BidListing) -> str:
+    """除外キーワードの判定対象は案件名のみ(公告文は見ない)。
+
+    公告文まで見ると除外が効きすぎて破綻する。官公庁の公告文には、物品調達の
+    案件であっても「工事」「調査」「委託」といった語がほぼ必ずどこかに出現する
+    ため(入札心得・関連法令・提出先部署名など)、公告文を対象にすると除外語を
+    1つ入れただけで正しい案件まで大量に巻き添えで消える。
+    実測(防災系キーワード・30日分1,000件): 公告文まで対象にすると
+    ヒット1,000件→99件まで落ち、案件名一致の良質な案件も124件→33件に減った。
+
+    一方、実際に混入するノイズ(「〜点検整備業務」「〜工事」「〜業務委託」
+    「〜の売却」)は案件名そのものに現れる。案件名だけを見れば、狙ったものだけを
+    落とせる。
+    """
+    return listing.project_name or ""
 
 
 def _extract_price(listing: BidListing, patterns: list[str]) -> int | None:
@@ -104,8 +117,7 @@ def score_listing(customer: Customer, listing: BidListing, settings: Settings) -
     """1顧客・1案件をスコアリングする。除外キーワード一致・地域/資格等級の
     ハード不一致の場合は None を返す(=候補から除外)。
     """
-    text = _searchable_text(listing)
-    excluded = _contains_any(text, customer.profile.exclude_keywords)
+    excluded = _contains_any(_exclusion_text(listing), customer.profile.exclude_keywords)
     if excluded:
         return None
 

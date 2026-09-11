@@ -47,6 +47,23 @@ def test_exclude_keyword_hard_excludes(settings):
     assert score_listing(customer, listing, settings) is None
 
 
+def test_exclude_keyword_ignores_project_description(settings):
+    """除外キーワードは案件名だけを見る(公告文に出てきても除外しない)。
+
+    官公庁の公告文には物品調達でも「工事」「調査」等がほぼ必ず出現するため
+    (入札心得・根拠法令・担当部署名など)、公告文まで対象にすると除外語を1つ
+    入れただけで正しい案件まで大量に巻き添えで消える。
+    """
+    customer = _customer(keywords="備蓄", exclude_keywords="工事")
+    listing = _listing(
+        project_name="災害用備蓄食料の購入",
+        project_description="本件は工事請負契約に係る入札心得に準じて取り扱う。",
+    )
+    result = score_listing(customer, listing, settings)
+    assert result is not None, "公告文の「工事」で除外されてはいけない"
+    assert result.score == 100
+
+
 def test_region_outside_target_hard_excludes(settings):
     customer = _customer(keywords="印刷", prefecture_codes="13,14")
     listing = _listing(project_name="印刷業務委託", lg_code="27")
