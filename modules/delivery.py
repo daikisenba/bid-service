@@ -44,6 +44,7 @@ RECOMMEND_HEADERS = [
 _URL_COLUMN = RECOMMEND_HEADERS.index("案件URL") + 1
 
 _TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "recommend_mail.md"
+_EMPTY_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "recommend_mail_empty.md"
 
 
 def _price_display(match: MatchResult) -> str:
@@ -123,13 +124,23 @@ def _award_email_lines(stats: PriceStats | None) -> str:
     return line
 
 
-def _footer_lines(settings: Settings) -> str:
+def _sheet_view_url(sheet_id: str) -> str:
+    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit"
+
+
+def _footer_lines(customer: Customer, settings: Settings) -> str:
     """配信メールのフッター(各種お手続き案内)。
 
     配信条件の変更は「メール返信」方式のため常に出力する(専用フォームは設けない)。
     1往復で完了するよう、返信の書き方の例と反映タイミングの目安を添える。
-    Stripeカスタマーポータル(解約・カード変更)のリンクはURL設定時のみ出力する。"""
-    lines = [
+    Stripeカスタマーポータル(解約・カード変更)のリンクはURL設定時のみ出力する。
+    過去配信分の一覧リンクは、顧客専用シート(output_sheet_id)に顧客本人を
+    reader以上で招待した後に出す運用を前提とする(setup_customer_sheet.py参照)。
+    """
+    lines = []
+    if customer.output_sheet_id:
+        lines.append(f"・これまでにご案内した案件の一覧: {_sheet_view_url(customer.output_sheet_id)}")
+    lines += [
         "・配信条件(対象エリア・品目など)の変更: このメールにそのままご返信ください",
         "  例:「対象エリアに神奈川県を追加してください」",
         "     「キーワードに『印刷』を追加、『保守』は除外してください」",
@@ -145,6 +156,20 @@ def _footer_lines(settings: Settings) -> str:
 
 
 def _render_email_body(customer: Customer, matches: list[MatchResult], settings: Settings) -> str:
+    """レコメンドメール本文を組み立てる。
+
+    matches が空でも必ず送る(0件の日も「新着なし」を明示的に伝える)。0件用の
+    テンプレートは案件一覧を持たないため、通常テンプレートとは別ファイルにして
+    「{listings}の後に0件でも成立する文」を無理に共存させない。
+    """
+    if not matches:
+        template = _EMPTY_TEMPLATE_PATH.read_text(encoding="utf-8")
+        return template.format(
+            company_name=settings.company.name,
+            customer_company_name=customer.company_name,
+            footer=_footer_lines(customer, settings),
+        )
+
     template = _TEMPLATE_PATH.read_text(encoding="utf-8")
     listing_lines = []
     for i, m in enumerate(matches, start=1):
@@ -163,7 +188,7 @@ def _render_email_body(customer: Customer, matches: list[MatchResult], settings:
         customer_company_name=customer.company_name,
         match_count=len(matches),
         listings="\n".join(listing_lines),
-        footer=_footer_lines(settings),
+        footer=_footer_lines(customer, settings),
     )
     # 参考落札相場を1件でも掲載したら出典を明記する(利用条件)
     if any(m.price_stats and m.price_stats.count > 0 for m in matches):
@@ -231,9 +256,14 @@ def build_recommend_email(
                    管理者が事後に確認できる状態を保つため(送信済みの控えが手元に残る)。
     """
     body = _render_email_body(customer, matches, settings)
+    subject = (
+        f"【入札案件レコメンド】{customer.company_name}様 - {len(matches)}件"
+        if matches
+        else f"【入札案件レコメンド】{customer.company_name}様 - 本日は新着なし"
+    )
 
     msg = MIMEMultipart()
-    msg["Subject"] = f"【入札案件レコメンド】{customer.company_name}様 - {len(matches)}件"
+    msg["Subject"] = subject
     msg["From"] = settings.email.from_address
 
     if settings.email.auto_send_to_customer:

@@ -340,3 +340,37 @@ def test_dry_run_does_not_write_to_sheet_but_reports_new_matches(fake_gc, settin
     assert len(new) == 1
     ws = fake_gc.spreadsheets["SHEET_C001"].worksheet(RECOMMEND_TAB)
     assert ws.rows == []
+
+
+def test_footer_includes_link_to_past_matches_sheet(settings):
+    # 過去にご案内した案件を顧客自身が見られるよう、専用シートのURLを毎回載せる
+    body = _capture_email_body(settings, [_match()])
+    assert "これまでにご案内した案件の一覧: https://docs.google.com/spreadsheets/d/SHEET_C001/edit" in body
+
+
+def test_empty_matches_sends_no_new_listings_notice(settings):
+    # 新着0件の日も、無音にせず「新着なし」を明示するメールを送る
+    body = _capture_email_body(settings, [])
+    assert "新規公開案件はございませんでした" in body
+    # 0件の日も過去分の一覧リンクは出す(見返す手段がなくなるわけではない)
+    assert "これまでにご案内した案件の一覧" in body
+    # 通常テンプレートの文言(案件リスト前提の文)が紛れ込んでいないこと
+    assert "各案件の詳細・応札要否のご検討をお願いいたします" not in body
+
+
+def test_empty_matches_subject_says_no_new_listings(settings):
+    service = FakeGmailService()
+    send_recommend_email(_customer(), [], settings, service)
+    msg = _sent_headers(service)
+    subject = str(make_header(decode_header(msg["Subject"])))
+    assert subject == "【入札案件レコメンド】サンプル商事株式会社様 - 本日は新着なし"
+
+
+def test_empty_matches_still_goes_to_customer_when_auto_send_enabled(settings):
+    # 0件でも auto_send_to_customer=True なら顧客へ直接届く(無音による解約誤解を防ぐ設計)
+    settings.email.auto_send_to_customer = True
+    service = FakeGmailService()
+    send_recommend_email(_customer(), [], settings, service)
+    msg = _sent_headers(service)
+    assert msg["To"] == "sato@example.jp"
+    assert msg["Bcc"] == settings.email.admin_address

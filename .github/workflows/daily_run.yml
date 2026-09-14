@@ -1,7 +1,9 @@
 name: Daily Bid Recommendation Batch
 
-# 顧客ごとの入札案件レコメンドを生成し、顧客専用シートへの追記と管理者宛メール
-# 送信までを行う。顧客への自動送信は一切行わない(管理者確認後に手動転送する)。
+# 顧客ごとの入札案件レコメンドを生成し、顧客専用シートへの追記とメール送信までを行う。
+# 顧客への自動送信の可否は config/settings.yaml の email.auto_send_to_customer で
+# 顧客一律に切り替える(true: 顧客へ直接送信・管理者にはBcc / false: 管理者宛のみ)。
+# 新着0件の日も「新着なし」メールを送る(main.py参照)。
 
 on:
   schedule:

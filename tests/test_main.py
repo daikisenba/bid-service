@@ -9,8 +9,17 @@ README記載の手順に従い、実際の認証情報を用意したうえで�
 """
 from __future__ import annotations
 
+import base64
+import email as email_module
+from email.header import decode_header, make_header
+
 import main
 from modules.models import AwardRecord, BidListing
+
+
+def _sent_subject(sent_entry: dict) -> str:
+    msg = email_module.message_from_bytes(base64.urlsafe_b64decode(sent_entry["body"]["raw"]))
+    return str(make_header(decode_header(msg["Subject"])))
 
 
 def _candidate_pool() -> list[BidListing]:
@@ -86,10 +95,13 @@ def test_daily_batch_completes_for_three_dummy_customers(monkeypatch, settings, 
     c003_rows = fake_gc.spreadsheets["SHEET_C003"].worksheet("レコメンド案件").rows
     assert c003_rows == []  # マッチなし
 
-    # 新着ありのC001・C002分のみメールが生成される(顧客への自動送信ではなく管理者宛)
+    # 新着0件のC003分も含め、3社全員にメールが生成される(無音による解約誤解を防ぐ設計。
+    # 顧客への自動送信ではなく管理者宛)
     sent = _GMAIL["service"].store.get("sent", [])
-    assert len(sent) == 2
+    assert len(sent) == 3
     assert all(m["userId"] == "me" for m in sent)
+    subjects = [_sent_subject(m) for m in sent]
+    assert any(s.endswith("サンプル物産株式会社様 - 本日は新着なし") for s in subjects)
 
     admin_log_rows = fake_gc.spreadsheets["MASTER_ID"].worksheet("実行ログ").rows
     assert len(admin_log_rows) == 1

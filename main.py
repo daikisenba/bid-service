@@ -3,8 +3,9 @@
 処理フロー:
 1. 顧客マスタから status=active の顧客一覧を取得する(不正・空プロファイルはスキップ)
 2. kkj.go.jp APIで案件プールを1回だけ取得する(顧客ごとに探索し直さない)
-3. 顧客ごとにマッチング→重複チェック付きでシート追記→新着があれば管理者宛メール送信
-   (1顧客の処理で例外が発生しても、残りの顧客の処理は継続する)
+3. 顧客ごとにマッチング→重複チェック付きでシート追記→レコメンドメール送信
+   (新着0件の日も「新着なし」を送る。何日も無音だと配信停止と誤解されるため。
+   1顧客の処理で例外が発生しても、残りの顧客の処理は継続する)
 4. 実行結果サマリを顧客マスタの実行ログタブに記録する
 """
 from __future__ import annotations
@@ -146,11 +147,12 @@ def run(settings_path: str = "config/settings.yaml", *, dry_run: bool = False) -
             # シートに追記された時点でカウントする。この後のメール送信が失敗しても
             # 行は既に書かれているため、サマリの総マッチ件数から漏らさない
             total_matches += len(new_matches)
-            if new_matches:
-                if dry_run:
-                    _print_dry_run_email(customer, new_matches, settings)
-                else:
-                    send_recommend_email(customer, new_matches, settings, gmail_service)
+            # 新着0件でも必ず送る(「今日は新着なし」を明示する。何日も無音が続くと
+            # 顧客側は配信が止まっているのか判別できないため)
+            if dry_run:
+                _print_dry_run_email(customer, new_matches, settings)
+            else:
+                send_recommend_email(customer, new_matches, settings, gmail_service)
             processed += 1
             logger.info(
                 "顧客 %s (%s): マッチ%d件中 新着%d件",
