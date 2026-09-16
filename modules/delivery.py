@@ -15,7 +15,7 @@ Google Workspaceが2025年にSMTPの基本認証を廃止したため、SMTP+ア
 from __future__ import annotations
 
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -23,6 +23,9 @@ from pathlib import Path
 import gspread
 
 from .awards import AWARD_SOURCE_NOTE
+
+# 顧客への送信可否判定はJST基準(顧客の営業日はJSTで動くため)。
+_JST = timezone(timedelta(hours=9))
 from .config import Settings
 from .models import Customer, CustomerError, MatchResult, PriceStats, SkipReason
 
@@ -108,6 +111,42 @@ def append_new_matches(
     ]
     ws.append_rows(rows, value_input_option="USER_ENTERED")
     return new_matches
+
+
+def today_jst() -> str:
+    """JST基準の今日の日付(YYYY-MM-DD)。1顧客1日1通の判定に使う。"""
+    return datetime.now(_JST).strftime("%Y-%m-%d")
+
+
+def already_sent_today(customer: Customer, today: str) -> bool:
+    """今日(JST)、この顧客に既にレコメンドメールを送信済みかどうか。
+
+    スケジュール実行の遅延で同日中に自動実行が複数回走る・手動で追い実行する・
+    dry-run確認の直後に本番実行する、といったケースがあるため、実際の送信直前に
+    これで確認して二重送信を防ぐ(1顧客1日1通)。
+    """
+    return bool(customer.last_sent_date) and customer.last_sent_date == today
+
+
+def record_sent_date(gc: gspread.Client, customer: Customer, settings: Settings, sent_date: str) -> None:
+    """顧客マスタの当該顧客行の「最終送信日」列を更新する。
+
+    列が存在しない顧客マスタ(移行前)でも例外にせず静かに何もしない。
+    """
+    sh = gc.open_by_key(settings.google.customer_master_sheet_id)
+    ws = sh.worksheet(settings.google.customer_master_tab)
+    headers = ws.row_values(1)
+    if "最終送信日" not in headers or "customer_id" not in headers:
+        return
+    date_col = headers.index("最終送信日") + 1
+    id_col = headers.index("customer_id") + 1
+    ids = ws.col_values(id_col)
+    for row_number, cid in enumerate(ids, start=1):
+        if row_number == 1:  # ヘッダー行はスキップ
+            continue
+        if cid == customer.customer_id:
+            ws.update_cell(row_number, date_col, sent_date)
+            return
 
 
 def _award_email_lines(stats: PriceStats | None) -> str:

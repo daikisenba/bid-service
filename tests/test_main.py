@@ -202,3 +202,51 @@ def test_award_stats_flow_into_customer_sheet(monkeypatch, settings, fake_gc):
     award_cell = c001_rows[0][AWARD_COL_INDEX]
     assert "同種4件" in award_cell
     assert "中央値¥250,000" in award_cell
+
+
+def test_customer_already_sent_today_is_skipped(monkeypatch, settings, fake_gc):
+    # C001の「最終送信日」列(10列目, 0-index 9)を今日と同じ日付にしておく
+    monkeypatch.setattr("main.today_jst", lambda: "2026-09-16")
+    master_ws = fake_gc.spreadsheets["MASTER_ID"].worksheet("顧客マスタ")
+    master_ws.rows[0][9] = "2026-09-16"  # C001は送信済み扱い
+
+    _patch_common(monkeypatch, settings, fake_gc, _candidate_pool())
+    exit_code = main.run()
+
+    assert exit_code == 0
+    sent = _GMAIL["service"].store.get("sent", [])
+    subjects = [_sent_subject(m) for m in sent]
+    # C001(サンプル商事株式会社)はスキップされ、C002・C003は通常通り送信される
+    assert not any("サンプル商事株式会社" in s for s in subjects)
+    assert any("テスト工業株式会社" in s for s in subjects)
+    assert any("サンプル物産株式会社" in s for s in subjects)
+    assert len(sent) == 2
+
+    # スキップされた顧客の最終送信日は上書きされない(既存の日付のまま)
+    assert master_ws.rows[0][9] == "2026-09-16"
+
+
+def test_sending_records_last_sent_date(monkeypatch, settings, fake_gc):
+    monkeypatch.setattr("main.today_jst", lambda: "2026-09-16")
+    master_ws = fake_gc.spreadsheets["MASTER_ID"].worksheet("顧客マスタ")
+    assert master_ws.rows[0][9] == ""  # 事前状態: 未送信
+
+    _patch_common(monkeypatch, settings, fake_gc, _candidate_pool())
+    main.run()
+
+    # 送信後、顧客マスタの最終送信日が更新されている
+    assert master_ws.rows[0][9] == "2026-09-16"
+    assert master_ws.rows[1][9] == "2026-09-16"
+    assert master_ws.rows[2][9] == "2026-09-16"
+
+
+def test_dry_run_does_not_record_last_sent_date(monkeypatch, settings, fake_gc):
+    # dry-runは送信済み判定こそ見るが、実際には送信しないので記録も更新しない
+    monkeypatch.setattr("main.today_jst", lambda: "2026-09-16")
+    master_ws = fake_gc.spreadsheets["MASTER_ID"].worksheet("顧客マスタ")
+
+    _patch_common(monkeypatch, settings, fake_gc, _candidate_pool())
+    main.run(dry_run=True)
+
+    assert master_ws.rows[0][9] == ""
+    assert _GMAIL["service"].store.get("sent", []) == []

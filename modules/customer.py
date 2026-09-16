@@ -85,6 +85,7 @@ def load_active_customers(gc: gspread.Client, settings: Settings) -> CustomerLoa
                 plan=row.get("プラン", "standard"),
                 status=status,
                 output_sheet_id=str(row.get("出力先スプレッドシートID", "")),
+                last_sent_date=str(row.get("最終送信日", "")).strip(),
                 profile=profile,
             )
         except ValidationError as exc:

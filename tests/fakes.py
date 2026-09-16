@@ -44,6 +44,14 @@ class FakeWorksheet:
     def update(self, values: list[list[object]], range_name: str | None = None) -> None:
         self.header = list(values[0])
 
+    def update_cell(self, row: int, col: int, value: object) -> None:
+        idx = row - 2  # 1行目はヘッダー
+        if 0 <= idx < len(self.rows):
+            data_row = self.rows[idx]
+            if len(data_row) < col:
+                data_row.extend([""] * (col - len(data_row)))
+            data_row[col - 1] = value
+
     def freeze(self, rows: int | None = None, cols: int | None = None) -> None:
         pass
 

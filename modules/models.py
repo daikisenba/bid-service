@@ -70,6 +70,10 @@ class Customer(BaseModel):
     status: Literal["active", "paused", "trial"]
     output_sheet_id: str
     profile: CustomerProfile
+    # JST基準の日付文字列(YYYY-MM-DD)。この顧客に最後にレコメンドメールを送った日。
+    # 1日1通に制限するための判定に使う(スケジュール実行の遅延・手動再実行・
+    # dry-run後の本番実行など、1日に複数回バッチが走っても二重送信しないため)。
+    last_sent_date: str = ""
 
 
 class BidListing(BaseModel):

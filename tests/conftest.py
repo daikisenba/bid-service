@@ -27,6 +27,7 @@ MASTER_HEADERS = [
     "契約開始日",
     "次回請求日",
     "出力先スプレッドシートID",
+    "最終送信日",
 ]
 PROFILE_HEADERS = [
     "customer_id",
@@ -82,9 +83,9 @@ def settings() -> Settings:
 @pytest.fixture
 def dummy_master_rows() -> list[list[object]]:
     return [
-        ["C001", "サンプル商事株式会社", "佐藤一郎", "sato@example.jp", "standard", "active", "2026-04-01", "2026-08-01", "SHEET_C001"],
-        ["C002", "テスト工業株式会社", "鈴木花子", "suzuki@example.jp", "premium", "active", "2026-05-01", "2026-08-01", "SHEET_C002"],
-        ["C003", "サンプル物産株式会社", "高橋次郎", "takahashi@example.jp", "standard", "active", "2026-06-01", "2026-08-01", "SHEET_C003"],
+        ["C001", "サンプル商事株式会社", "佐藤一郎", "sato@example.jp", "standard", "active", "2026-04-01", "2026-08-01", "SHEET_C001", ""],
+        ["C002", "テスト工業株式会社", "鈴木花子", "suzuki@example.jp", "premium", "active", "2026-05-01", "2026-08-01", "SHEET_C002", ""],
+        ["C003", "サンプル物産株式会社", "高橋次郎", "takahashi@example.jp", "standard", "active", "2026-06-01", "2026-08-01", "SHEET_C003", ""],
     ]
 
 

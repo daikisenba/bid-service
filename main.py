@@ -5,6 +5,9 @@
 2. kkj.go.jp APIで案件プールを1回だけ取得する(顧客ごとに探索し直さない)
 3. 顧客ごとにマッチング→重複チェック付きでシート追記→レコメンドメール送信
    (新着0件の日も「新着なし」を送る。何日も無音だと配信停止と誤解されるため。
+   ただし顧客マスタの「最終送信日」がJST基準の本日と一致する顧客はスキップする
+   =1顧客1日1通。スケジュール実行の遅延で同日中に複数回トリガーされる・
+   手動で追い実行する、といった場合の二重送信を防ぐ。
    1顧客の処理で例外が発生しても、残りの顧客の処理は継続する)
 4. 実行結果サマリを顧客マスタの実行ログタブに記録する
 """
@@ -19,10 +22,13 @@ from modules.auth import build_gmail_service, build_gspread_client
 from modules.awards import attach_price_stats, fetch_awards
 from modules.customer import load_active_customers
 from modules.delivery import (
+    already_sent_today,
     append_new_matches,
     build_recommend_email,
     check_mail_auth,
+    record_sent_date,
     send_recommend_email,
+    today_jst,
     write_admin_summary,
 )
 from modules.matching import match_customer
@@ -147,12 +153,25 @@ def run(settings_path: str = "config/settings.yaml", *, dry_run: bool = False) -
             # シートに追記された時点でカウントする。この後のメール送信が失敗しても
             # 行は既に書かれているため、サマリの総マッチ件数から漏らさない
             total_matches += len(new_matches)
-            # 新着0件でも必ず送る(「今日は新着なし」を明示する。何日も無音が続くと
-            # 顧客側は配信が止まっているのか判別できないため)
-            if dry_run:
+
+            today = today_jst()
+            # 1顧客1日1通に制限する。スケジュール実行の遅延で同日中に複数回
+            # トリガーされる・手動で追い実行する・dry-run確認の直後に本番実行する、
+            # といったケースで二重にメールが届くのを防ぐ(2026-09-16 導入)。
+            if already_sent_today(customer, today):
+                logger.info(
+                    "顧客 %s (%s): 本日(%s)は送信済みのためスキップします",
+                    customer.customer_id,
+                    customer.company_name,
+                    today,
+                )
+            elif dry_run:
+                # 新着0件でも必ず送る想定なので、送信されるはずの内容をそのまま表示する
                 _print_dry_run_email(customer, new_matches, settings)
             else:
                 send_recommend_email(customer, new_matches, settings, gmail_service)
+                record_sent_date(gc, customer, settings, today)
+
             processed += 1
             logger.info(
                 "顧客 %s (%s): マッチ%d件中 新着%d件",

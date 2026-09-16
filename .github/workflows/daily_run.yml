@@ -7,10 +7,17 @@ name: Daily Bid Recommendation Batch
 
 on:
   schedule:
-    # GitHub cron is UTC. 07:30 JST = 22:30 UTC の前日。
+    # GitHub cron is UTC. 06:00 JST = 21:00 UTC の前日。
     # JST Mon-Fri -> UTC Sun-Thu (day-of-week 0-4)。
-    # 無料枠のスケジュール実行はベストエフォートで遅延することがあるため早めに設定する。
-    - cron: "30 22 * * 0-4"
+    #
+    # 目標配信時刻は07:30 JSTだが、無料枠のスケジュール実行は「ベストエフォート、
+    # 遅延あり」がGitHub公式の仕様であり、実測でも遅延幅がリポジトリの直近の
+    # コミット頻度と相関して変動する(2026-09-16時点の実測: 活発な時期で
+    # +12〜+32分、コミットが途絶えた時期は+95〜+575分)。100%の時刻保証は
+    # この仕組みではできないため、90分のバッファを見て前倒しで発火させている。
+    # それでも07:30に間に合わない日があれば、外部トリガー(例: Google Apps
+    # Scriptの時刻起動トリガーからworkflow_dispatchを叩く)への切替を検討する。
+    - cron: "0 21 * * 0-4"
   workflow_dispatch:
     inputs:
       mail_check:

@@ -56,6 +56,9 @@ _MASTER_HEADERS = [
     "契約開始日",
     "次回請求日",
     "出力先スプレッドシートID",
+    # 1顧客1日1通の重複送信防止に使う(modules/delivery.py の
+    # already_sent_today / record_sent_date が読み書きする)
+    "最終送信日",
 ]
 _PROFILE_HEADERS = [
     "customer_id",
@@ -134,6 +137,7 @@ def _append_master_row(gc: gspread.Client, settings, args: argparse.Namespace) -
             args.contract_start,
             args.next_billing_date,
             args.sheet_id,
+            "",  # 最終送信日(未送信)
         ],
         value_input_option="USER_ENTERED",
     )
