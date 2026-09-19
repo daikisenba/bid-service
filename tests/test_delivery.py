@@ -99,12 +99,13 @@ def _decode_sent_body(service: FakeGmailService) -> str:
     raise AssertionError("text/plain パートが見つかりません")
 
 
-def _customer(output_sheet_id: str = "SHEET_C001") -> Customer:
+def _customer(output_sheet_id: str = "SHEET_C001", cc_emails: str = "") -> Customer:
     return Customer(
         customer_id="C001",
         company_name="サンプル商事株式会社",
         contact_name="佐藤一郎",
         contact_email="sato@example.jp",
+        cc_emails=cc_emails,
         plan="standard",
         status="active",
         output_sheet_id=output_sheet_id,
@@ -374,3 +375,43 @@ def test_empty_matches_still_goes_to_customer_when_auto_send_enabled(settings):
     msg = _sent_headers(service)
     assert msg["To"] == "sato@example.jp"
     assert msg["Bcc"] == settings.email.admin_address
+
+
+def test_cc_emails_added_when_auto_send_enabled(settings):
+    # Ccは顧客への直送時のみ意味を持つ(管理者確認モードでは付けない)
+    settings.email.auto_send_to_customer = True
+    customer = _customer(cc_emails="y.kaneko@nrg.co.jp")
+    service = FakeGmailService()
+    send_recommend_email(customer, [_match()], settings, service)
+
+    msg = _sent_headers(service)
+    assert msg["Cc"] == "y.kaneko@nrg.co.jp"
+
+
+def test_cc_emails_supports_multiple_addresses(settings):
+    settings.email.auto_send_to_customer = True
+    customer = _customer(cc_emails="a@example.jp, b@example.jp")
+    service = FakeGmailService()
+    send_recommend_email(customer, [_match()], settings, service)
+
+    msg = _sent_headers(service)
+    assert msg["Cc"] == "a@example.jp, b@example.jp"
+
+
+def test_cc_header_omitted_when_no_cc_emails(settings):
+    settings.email.auto_send_to_customer = True
+    service = FakeGmailService()
+    send_recommend_email(_customer(), [_match()], settings, service)
+
+    msg = _sent_headers(service)
+    assert msg["Cc"] is None
+
+
+def test_cc_emails_ignored_in_admin_confirmation_mode(settings):
+    # auto_send_to_customer=False(既定)では、Ccが設定されていても付けない
+    customer = _customer(cc_emails="y.kaneko@nrg.co.jp")
+    service = FakeGmailService()
+    send_recommend_email(customer, [_match()], settings, service)
+
+    msg = _sent_headers(service)
+    assert msg["Cc"] is None

@@ -82,6 +82,7 @@ def load_active_customers(gc: gspread.Client, settings: Settings) -> CustomerLoa
                 company_name=str(row.get("会社名", "")),
                 contact_name=str(row.get("担当者名", "")),
                 contact_email=str(row.get("メールアドレス", "")),
+                cc_emails=row.get("Cc", ""),
                 plan=row.get("プラン", "standard"),
                 status=status,
                 output_sheet_id=str(row.get("出力先スプレッドシートID", "")),

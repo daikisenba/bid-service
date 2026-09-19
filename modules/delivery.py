@@ -293,6 +293,8 @@ def build_recommend_email(
       True       : 顧客(contact_email)へ直接送り、管理者にはBccで同じものを送る。
                    Bccを必ず付けるのは、自動送信に切り替えても「何が社外に出たか」を
                    管理者が事後に確認できる状態を保つため(送信済みの控えが手元に残る)。
+                   customer.cc_emails があれば、この場合のみCcとして追加する
+                   (管理者確認モードでは、管理者が転送時に自分で宛先を判断するため付けない)。
     """
     body = _render_email_body(customer, matches, settings)
     subject = (
@@ -312,6 +314,8 @@ def build_recommend_email(
                 "顧客マスタのメールアドレス列を確認してください。"
             )
         msg["To"] = customer.contact_email
+        if customer.cc_emails:
+            msg["Cc"] = ", ".join(customer.cc_emails)
         msg["Bcc"] = settings.email.admin_address
         msg.attach(MIMEText(body, "plain", "utf-8"))
     else:

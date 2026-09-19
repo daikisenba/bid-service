@@ -59,6 +59,9 @@ _MASTER_HEADERS = [
     # 1顧客1日1通の重複送信防止に使う(modules/delivery.py の
     # already_sent_today / record_sent_date が読み書きする)
     "最終送信日",
+    # 主担当者(メールアドレス)以外にも同じ内容を届けたい場合のCc宛先。
+    # カンマ区切りで複数指定可。auto_send_to_customer=Trueのときのみ使われる。
+    "Cc",
 ]
 _PROFILE_HEADERS = [
     "customer_id",
@@ -80,6 +83,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--company-name", required=True)
     parser.add_argument("--contact-name", required=True)
     parser.add_argument("--contact-email", required=True)
+    parser.add_argument("--cc-emails", default="", help="カンマ区切り(任意。主担当者以外にも届けたい宛先)")
     parser.add_argument("--plan", choices=["standard", "premium"], default="standard")
     parser.add_argument("--status", choices=["active", "paused", "trial"], default="trial")
     parser.add_argument("--sheet-id", required=True, help="手動作成・共有済みの顧客専用シートID")
@@ -138,6 +142,7 @@ def _append_master_row(gc: gspread.Client, settings, args: argparse.Namespace) -
             args.next_billing_date,
             args.sheet_id,
             "",  # 最終送信日(未送信)
+            args.cc_emails,
         ],
         value_input_option="USER_ENTERED",
     )

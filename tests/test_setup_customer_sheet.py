@@ -34,6 +34,7 @@ def test_append_master_row_adds_customer_and_profile(settings):
         company_name="新規株式会社",
         contact_name="田中三郎",
         contact_email="tanaka@example.jp",
+        cc_emails="",
         plan="standard",
         status="trial",
         sheet_id="SHEET_C004",
@@ -54,6 +55,36 @@ def test_append_master_row_adds_customer_and_profile(settings):
     assert len(master_rows) == 1
     assert master_rows[0][0] == "C004"
     assert master_rows[0][8] == "SHEET_C004"
+    assert master_rows[0][9] == ""  # 最終送信日(未送信)
+    assert master_rows[0][10] == ""  # Cc(未指定)
+
+
+def test_append_master_row_records_cc_emails(settings):
+    gc = _empty_master_gc()
+    args = argparse.Namespace(
+        customer_id="C004",
+        company_name="新規株式会社",
+        contact_name="田中三郎",
+        contact_email="tanaka@example.jp",
+        cc_emails="cc1@example.jp,cc2@example.jp",
+        plan="standard",
+        status="trial",
+        sheet_id="SHEET_C004",
+        keywords="消耗品",
+        exclude_keywords="",
+        prefecture_codes="13",
+        price_min="",
+        price_max="",
+        organization_types="",
+        qualification_grades="",
+        contract_start="2026-07-10",
+        next_billing_date="2026-08-10",
+    )
+
+    setup_customer_sheet._append_master_row(gc, settings, args)
+
+    master_rows = gc.spreadsheets[MASTER_ID].worksheet("顧客マスタ").rows
+    assert master_rows[0][10] == "cc1@example.jp,cc2@example.jp"
 
     profile_rows = gc.spreadsheets[MASTER_ID].worksheet("条件プロファイル").rows
     assert len(profile_rows) == 1

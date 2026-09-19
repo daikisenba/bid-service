@@ -66,10 +66,15 @@ class Customer(BaseModel):
     company_name: str
     contact_name: str
     contact_email: str
+    # 主担当者(contact_email)以外にも同じ内容を届けたい場合のCc宛先。
+    # カンマ区切りで複数指定可(_split_csvで正規化)。空なら通常通りCcなしで送る。
+    cc_emails: list[str] = Field(default_factory=list)
     plan: Literal["standard", "premium"]
     status: Literal["active", "paused", "trial"]
     output_sheet_id: str
     profile: CustomerProfile
+
+    _split_cc = field_validator("cc_emails", mode="before")(_split_csv)
     # JST基準の日付文字列(YYYY-MM-DD)。この顧客に最後にレコメンドメールを送った日。
     # 1日1通に制限するための判定に使う(スケジュール実行の遅延・手動再実行・
     # dry-run後の本番実行など、1日に複数回バッチが走っても二重送信しないため)。

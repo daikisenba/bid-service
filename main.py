@@ -64,6 +64,7 @@ def _print_dry_run_email(customer, matches, settings) -> None:
     body = msg.get_payload(0).get_payload(decode=True).decode("utf-8")
     print("\n" + "=" * 72)
     print(f"To:      {msg['To']}")
+    print(f"Cc:      {msg['Cc'] or '(なし)'}")
     print(f"Bcc:     {msg['Bcc'] or '(なし)'}")
     print(f"From:    {msg['From']}")
     print(f"Subject: {msg['Subject']}")
