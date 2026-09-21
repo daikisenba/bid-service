@@ -44,8 +44,14 @@ RECOMMEND_HEADERS = [
     "レコメンド理由",
     _AWARD_COL_HEADER,
     "ステータス",
+    # 顧客が実際にクリックして開くリンク(display_url相当)。「案件URL」列は
+    # 重複判定のキーとして常に一意なkeyを保持するため、発注機関によっては
+    # (p-portalの検索トップページ等)顧客が開いても案件詳細が見られない。
+    # 締切リマインドメール(Phase B)はこちらの列を使う(2026-09-21追加)。
+    "表示用リンク",
 ]
 _URL_COLUMN = RECOMMEND_HEADERS.index("案件URL") + 1
+_DISPLAY_URL_COLUMN = RECOMMEND_HEADERS.index("表示用リンク") + 1
 
 _TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "recommend_mail.md"
 _EMPTY_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "recommend_mail_empty.md"
@@ -145,6 +151,7 @@ def write_matches(gc: gspread.Client, customer: Customer, new_matches: list[Matc
             " / ".join(_full_reasons(m)),
             _award_cell(m.price_stats),
             "未確認",
+            m.listing.display_url,
         ]
         for m in new_matches
     ]
@@ -216,11 +223,14 @@ _UNCONFIRMED_STATUS = "未確認"
 class UpcomingDeadline:
     """締切リマインド対象の1件。シートの行データをそのまま保持する軽量な入れ物。"""
 
-    def __init__(self, project_name: str, organization_name: str, deadline: date, dedup_key: str):
+    def __init__(self, project_name: str, organization_name: str, deadline: date, url: str):
         self.project_name = project_name
         self.organization_name = organization_name
         self.deadline = deadline
-        self.dedup_key = dedup_key
+        # 顧客が実際にクリックして開くリンク(表示用リンク列の値。無ければ
+        # 案件URL列にフォールバック。旧データ(表示用リンク列が無い時代に
+        # 書かれた行)との互換性のため)。
+        self.url = url
 
 
 def find_upcoming_deadlines(
@@ -255,6 +265,9 @@ def find_upcoming_deadlines(
     deadline_col = header.index("締切日")
     url_col = header.index("案件URL")
     status_col = header.index("ステータス")
+    # 表示用リンク列は2026-09-21追加。それ以前に書かれた行には無いため、
+    # 列自体が無い/値が空ならurl_col(重複判定キー=key)にフォールバックする。
+    display_url_col = header.index("表示用リンク") if "表示用リンク" in header else None
 
     upper_bound = today + timedelta(days=threshold_days)
     upcoming: list[UpcomingDeadline] = []
@@ -271,12 +284,17 @@ def find_upcoming_deadlines(
         except ValueError:
             continue
         if today <= deadline <= upper_bound:
+            display_url = ""
+            if display_url_col is not None and len(row) > display_url_col:
+                display_url = row[display_url_col]
+            if not display_url:
+                display_url = row[url_col] if len(row) > url_col else ""
             upcoming.append(
                 UpcomingDeadline(
                     project_name=row[name_col],
                     organization_name=row[org_col] if len(row) > org_col else "",
                     deadline=deadline,
-                    dedup_key=row[url_col] if len(row) > url_col else "",
+                    url=display_url,
                 )
             )
     upcoming.sort(key=lambda u: u.deadline)
@@ -491,7 +509,7 @@ def _render_deadline_reminder_body(
             f"{i}. {u.project_name}\n"
             f"   発注機関: {u.organization_name or '不明'}\n"
             f"   締切日: {u.deadline.isoformat()}(あと{days_left}日)\n"
-            f"   案件URL: {u.dedup_key}\n"
+            f"   案件URL: {u.url}\n"
         )
     return template.format(
         company_name=settings.company.name,

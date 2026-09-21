@@ -11,6 +11,7 @@ import pytest
 from googleapiclient.errors import HttpError
 
 from modules.delivery import (
+    RECOMMEND_HEADERS,
     RECOMMEND_TAB,
     append_new_matches,
     build_deadline_reminder_email,
@@ -618,3 +619,51 @@ def test_send_deadline_reminder_email_uses_gmail_send(settings):
     service = FakeGmailService()
     send_deadline_reminder_email(customer, upcoming, settings, service)
     assert len(service.store["sent"]) == 1
+
+
+def test_write_matches_writes_display_url_column(fake_gc, settings):
+    """「表示用リンク」列には display_url(external_document_uri優先)が入り、
+    「案件URL」列は引き続き dedup_key(=key、重複判定用)のままであること。
+    """
+    listing = BidListing(
+        result_id="1",
+        key="c2VhcmNoL3BfcG9ydGFsLzIwMjYvMDkvMjAyNjA5MThfNzkzNDMK",  # 重複判定キー
+        external_document_uri="https://www.example.go.jp/detail/12345",  # 表示用
+        project_name="備蓄品の購入",
+        organization_name="某市",
+    )
+    match = MatchResult(listing=listing, customer_id="C001", score=90, reasons=["ok"])
+
+    new = find_new_matches(fake_gc, _customer(), [match])
+    write_matches(fake_gc, _customer(), new)
+
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet("レコメンド案件")
+    display_url_col_idx = RECOMMEND_HEADERS.index("表示用リンク")
+    assert ws.rows[0][5] == "c2VhcmNoL3BfcG9ydGFsLzIwMjYvMDkvMjAyNjA5MThfNzkzNDMK"  # 案件URL列=key
+    assert ws.rows[0][display_url_col_idx] == "https://www.example.go.jp/detail/12345"
+
+
+def test_find_upcoming_deadlines_uses_display_url_column(fake_gc, settings):
+    """表示用リンク列がある行では、そちらをUpcomingDeadline.urlとして使う。"""
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet(RECOMMEND_TAB)
+    # 案件名,発注機関,公告日,締切日,予定価格,案件URL(key),マッチ度,理由,相場,ステータス,表示用リンク
+    ws.rows.append([
+        "備蓄品の購入", "某市", "", "2026-09-24", "要確認",
+        "internal-key-xyz", 100, "ok", "", "未確認",
+        "https://www.example.go.jp/detail/12345",
+    ])
+
+    result = find_upcoming_deadlines(fake_gc, _customer(), today=date(2026, 9, 21))
+    assert len(result) == 1
+    assert result[0].url == "https://www.example.go.jp/detail/12345"
+
+
+def test_find_upcoming_deadlines_falls_back_to_url_column_for_old_rows(fake_gc, settings):
+    """表示用リンク列を持たない(=2026-09-21より前に書かれた)古い行では、
+    案件URL列(内部キー)にフォールバックする。"""
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet(RECOMMEND_TAB)
+    ws.rows.append(_reminder_row("旧データの案件", "某省", "2026-09-24", "未確認", url="internal-key-old"))
+
+    result = find_upcoming_deadlines(fake_gc, _customer(), today=date(2026, 9, 21))
+    assert len(result) == 1
+    assert result[0].url == "internal-key-old"
