@@ -114,12 +114,17 @@ def _price_component(
 
 
 def score_listing(customer: Customer, listing: BidListing, settings: Settings) -> MatchResult | None:
-    """1顧客・1案件をスコアリングする。除外キーワード一致・地域/資格等級の
-    ハード不一致の場合は None を返す(=候補から除外)。
+    """1顧客・1案件をスコアリングする。地域/資格等級のハード不一致の場合は
+    None を返す(=候補から除外)。
+
+    除外キーワード一致は2026-09-21〜ハード除外しない(最終判定はLLMに委ねる)。
+    実測(30日・防災系キーワード)で、除外キーワードにより76件が機械的に消えており、
+    その中に「防災備蓄倉庫整備業務」のような本物の物品購入案件が誤って巻き添えに
+    なっている疑いがあったため。一致有無は exclude_keywords_matched に記録し、
+    modules/llm_judge.py のプロンプトへ渡すシグナルとして使う。LLM判定が失敗した
+    場合はfail-openでこの案件も通す(=旧来の「除外しない」動作と同じになる)。
     """
-    excluded = _contains_any(_exclusion_text(listing), customer.profile.exclude_keywords)
-    if excluded:
-        return None
+    exclude_keywords_matched = _contains_any(_exclusion_text(listing), customer.profile.exclude_keywords)
 
     region = _region_component(customer, listing)
     if region is None:
@@ -143,13 +148,18 @@ def score_listing(customer: Customer, listing: BidListing, settings: Settings) -
         + price_mult * weights.price
     )
 
+    reasons = [keyword_reason, region_reason, qualification_reason, price_reason]
+    if exclude_keywords_matched:
+        reasons.append(f"除外キーワード一致(案件名・要LLM確認): {', '.join(exclude_keywords_matched)}")
+
     return MatchResult(
         listing=listing,
         customer_id=customer.customer_id,
         score=score,
-        reasons=[keyword_reason, region_reason, qualification_reason, price_reason],
+        reasons=reasons,
         estimated_price=estimated_price,
         price_confirmed=price_confirmed,
+        exclude_keywords_matched=exclude_keywords_matched,
     )
 
 

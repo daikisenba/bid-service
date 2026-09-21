@@ -73,6 +73,9 @@ def _patch_common(monkeypatch, settings, fake_gc, candidate_pool, award_records=
     monkeypatch.setattr("main.fetch_candidate_pool", lambda customers, settings: candidate_pool)
     # 落札実績取得はネットワークを避けてスタブ化する(既定は空=相場データなし)
     monkeypatch.setattr("main.fetch_awards", lambda settings: award_records or [])
+    # LLM判定はテスト環境のANTHROPIC_API_KEY有無に依存させない(未設定ならfail-open、
+    # 実行環境に偶然キーがあってもネットワークへ実際に呼びに行かないようにする)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
 
 def test_daily_batch_completes_for_three_dummy_customers(monkeypatch, settings, fake_gc):
@@ -85,7 +88,8 @@ def test_daily_batch_completes_for_three_dummy_customers(monkeypatch, settings, 
     c001_rows = fake_gc.spreadsheets["SHEET_C001"].worksheet("レコメンド案件").rows
     assert len(c001_rows) == 1
     assert c001_rows[0][0] == "消耗品(文具)の購入"
-    # 除外キーワード「工事」により庁舎改修工事はC001のシートに入らない
+    # 庁舎改修工事はキーワード(消耗品,印刷,封筒)に一致せず閾値未満のためC001の
+    # シートに入らない(除外キーワードのハード除外は2026-09-21に撤廃済み)
     assert all("庁舎改修工事" != row[0] for row in c001_rows)
 
     c002_rows = fake_gc.spreadsheets["SHEET_C002"].worksheet("レコメンド案件").rows
@@ -250,3 +254,45 @@ def test_dry_run_does_not_record_last_sent_date(monkeypatch, settings, fake_gc):
 
     assert master_ws.rows[0][9] == ""
     assert _GMAIL["service"].store.get("sent", []) == []
+
+
+def test_llm_judge_failure_does_not_stop_customer_processing(monkeypatch, settings, fake_gc):
+    """judge_relevance が想定外の例外を投げても、main.run() 全体はfail-openで
+    継続する(llm_judgeモジュール内部のfail-openとは別に、main.py側でも
+    二重に守っていることの確認)。"""
+    _patch_common(monkeypatch, settings, fake_gc, _candidate_pool())
+    monkeypatch.setattr(
+        "main.judge_relevance",
+        lambda customer, matches, settings: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    exit_code = main.run()
+
+    assert exit_code == 0
+    # LLM判定が例外を投げても、キーワードマッチした案件は通常通り配信される
+    c001_rows = fake_gc.spreadsheets["SHEET_C001"].worksheet("レコメンド案件").rows
+    assert len(c001_rows) == 1
+    assert c001_rows[0][0] == "消耗品(文具)の購入"
+
+
+def test_llm_relevant_false_excludes_from_sheet_and_email(monkeypatch, settings, fake_gc):
+    """llm_relevant=False と判定された候補は、シート追記・メール本文の
+    両方から除外される。"""
+    _patch_common(monkeypatch, settings, fake_gc, _candidate_pool())
+
+    def _fake_judge(customer, matches, settings):
+        for m in matches:
+            m.llm_relevant = False
+            m.llm_reason = "テストで強制的に無関係と判定"
+
+    monkeypatch.setattr("main.judge_relevance", _fake_judge)
+
+    exit_code = main.run()
+
+    assert exit_code == 0
+    c001_rows = fake_gc.spreadsheets["SHEET_C001"].worksheet("レコメンド案件").rows
+    assert c001_rows == []
+
+    sent = _GMAIL["service"].store.get("sent", [])
+    subjects = [_sent_subject(m) for m in sent]
+    assert any(s.endswith("サンプル商事株式会社様 - 本日は新着なし") for s in subjects)

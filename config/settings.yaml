@@ -75,3 +75,16 @@ awards:
   # 今年度を含め何年度分をさかのぼって相場計算に使うか(2 = 今年度+前年度)
   fiscal_year_lookback: 2
   timeout_seconds: 60
+
+llm:
+  # 【2026-09-21導入】LLMによる案件関連性判定+締切日・予定価格の高精度抽出。
+  # modules/matching.py で除外キーワードのハード除外を撤廃した分、最終判断を
+  # ここで行う。APIキーは環境変数 ANTHROPIC_API_KEY から読む(ここには書かない)。
+  # キー未設定・呼び出し失敗時はfail-open(判定なしで通す)ため、無効化したい
+  # ときだけ明示的に false にする。
+  enabled: true
+  api_base_url: "https://api.anthropic.com/v1/messages"
+  model: "claude-haiku-4-5-20251001"
+  max_tokens: 4096
+  timeout_seconds: 60
+  anthropic_version: "2023-06-01"

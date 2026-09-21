@@ -41,10 +41,18 @@ def test_full_match_scores_100(settings):
     assert result.estimated_price == 120000
 
 
-def test_exclude_keyword_hard_excludes(settings):
+def test_exclude_keyword_no_longer_hard_excludes(settings):
+    """除外キーワード一致は2026-09-21〜ハード除外しない(最終判定はLLMに委ねる)。
+
+    除外キーワードで本物の物品購入案件が巻き添えになる実測結果があったため、
+    一致有無は exclude_keywords_matched に記録するだけにし、候補には残す。
+    """
     customer = _customer(keywords="消耗品", exclude_keywords="工事")
     listing = _listing(project_name="消耗品調達に伴う設置工事")
-    assert score_listing(customer, listing, settings) is None
+    result = score_listing(customer, listing, settings)
+    assert result is not None
+    assert result.exclude_keywords_matched == ["工事"]
+    assert any("除外キーワード一致" in r for r in result.reasons)
 
 
 def test_exclude_keyword_ignores_project_description(settings):
@@ -62,6 +70,7 @@ def test_exclude_keyword_ignores_project_description(settings):
     result = score_listing(customer, listing, settings)
     assert result is not None, "公告文の「工事」で除外されてはいけない"
     assert result.score == 100
+    assert result.exclude_keywords_matched == []
 
 
 def test_region_outside_target_hard_excludes(settings):

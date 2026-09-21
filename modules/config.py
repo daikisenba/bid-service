@@ -66,6 +66,25 @@ class AwardsSettings(BaseModel):
     timeout_seconds: int = 60
 
 
+class LlmSettings(BaseModel):
+    """LLMによる案件関連性判定+締切日・予定価格の高精度抽出(2026-09-21導入)。
+
+    キーワード完全一致だけでは表記ゆれ(「簡易ベッド」「ワンタッチベッド」等)を
+    拾いきれず、除外キーワードのハード除外が本物の物品購入案件も巻き添えにする
+    問題が実測で判明したため、除外は撤廃しLLMに最終判定を委ねる設計にした
+    (modules/llm_judge.py, modules/matching.py参照)。APIキーは
+    settings.yamlに置かず環境変数 ANTHROPIC_API_KEY から読む
+    (modules/auth.pyのサービスアカウント認証と同じ方針)。
+    """
+
+    enabled: bool = True
+    api_base_url: str = "https://api.anthropic.com/v1/messages"
+    model: str = "claude-haiku-4-5-20251001"
+    max_tokens: int = 4096
+    timeout_seconds: int = 60
+    anthropic_version: str = "2023-06-01"
+
+
 class Settings(BaseModel):
     google: GoogleSettings
     search: SearchSettings
@@ -73,6 +92,7 @@ class Settings(BaseModel):
     email: EmailSettings
     company: CompanySettings
     awards: AwardsSettings = AwardsSettings()
+    llm: LlmSettings = LlmSettings()
 
 
 def load_settings(path: str | Path = "config/settings.yaml") -> Settings:

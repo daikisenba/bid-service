@@ -24,6 +24,7 @@ def _build_profile(customer_id: str, row: dict[str, object]) -> CustomerProfile:
         price_max=row.get("予定価格上限") or None,
         organization_types=row.get("発注機関の種別", ""),
         qualification_grades=row.get("資格等級", ""),
+        business_description=row.get("事業内容", ""),
     )
 
 

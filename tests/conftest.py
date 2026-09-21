@@ -7,6 +7,7 @@ from modules.config import (
     CompanySettings,
     EmailSettings,
     GoogleSettings,
+    LlmSettings,
     MatchingSettings,
     MatchingWeights,
     SearchSettings,
@@ -38,6 +39,7 @@ PROFILE_HEADERS = [
     "予定価格上限",
     "発注機関の種別",
     "資格等級",
+    "事業内容",
 ]
 ADMIN_LOG_HEADERS = ["実行日時", "処理顧客数", "スキップ顧客数", "総マッチ件数", "エラー件数", "詳細"]
 # RECOMMEND_HEADERS は delivery からインポート(参考落札相場列を含む単一ソース)。
@@ -77,6 +79,7 @@ def settings() -> Settings:
         ),
         company=CompanySettings(name="テスト株式会社"),
         awards=AwardsSettings(enabled=True, fiscal_year_lookback=2, timeout_seconds=60),
+        llm=LlmSettings(enabled=True, timeout_seconds=60),
     )
 
 
@@ -92,9 +95,9 @@ def dummy_master_rows() -> list[list[object]]:
 @pytest.fixture
 def dummy_profile_rows() -> list[list[object]]:
     return [
-        ["C001", "消耗品,印刷,封筒", "工事,保守", "13,14", "10000", "1000000", "国,独法", "C,D"],
-        ["C002", "防災,衛生用品", "", "27", "", "", "", ""],
-        ["C003", "文房具", "", "01", "", "", "", ""],
+        ["C001", "消耗品,印刷,封筒", "工事,保守", "13,14", "10000", "1000000", "国,独法", "C,D", ""],
+        ["C002", "防災,衛生用品", "", "27", "", "", "", "", ""],
+        ["C003", "文房具", "", "01", "", "", "", "", ""],
     ]
 
 

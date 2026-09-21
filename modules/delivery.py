@@ -50,10 +50,36 @@ _TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "recomme
 _EMPTY_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "recommend_mail_empty.md"
 
 
-def _price_display(match: MatchResult) -> str:
-    if match.estimated_price is None:
-        return "要確認"
-    return f"¥{match.estimated_price:,}"
+def _resolve_deadline(match: MatchResult) -> str:
+    """締切日の表示値。kkj.go.jp API側の構造化値(period_end_time)を優先し、
+    それが空のときだけLLM抽出値(llm_deadline)を補完として使う。LLMは公告文を
+    読んで抽出するため誤読(幻覚)のリスクがあり、構造化データを上書きしない
+    方針(確定値優先・LLM値は「補完」の位置づけ)。
+    """
+    if match.listing.period_end_time:
+        return match.listing.period_end_time
+    if match.llm_deadline:
+        return f"{match.llm_deadline}(AI抽出・要確認)"
+    return "要確認"
+
+
+def _resolve_price(match: MatchResult) -> str:
+    """予定価格の表示値。正規表現抽出(estimated_price)を優先し、それが
+    失敗した場合のみLLM抽出値(llm_estimated_price)を補完として使う。
+    """
+    if match.estimated_price is not None:
+        return f"¥{match.estimated_price:,}"
+    if match.llm_estimated_price is not None:
+        return f"¥{match.llm_estimated_price:,}(AI抽出・要確認)"
+    return "要確認"
+
+
+def _full_reasons(match: MatchResult) -> list[str]:
+    """レコメンド理由。LLM判定コメントがあれば末尾に追記する。"""
+    reasons = list(match.reasons)
+    if match.llm_reason:
+        reasons.append(f"AI判定: {match.llm_reason}")
+    return reasons
 
 
 def _award_cell(stats: PriceStats | None) -> str:
@@ -73,6 +99,49 @@ def _existing_urls(ws: gspread.Worksheet) -> set[str]:
     return {v.strip() for v in values[1:] if v.strip()}
 
 
+def find_new_matches(
+    gc: gspread.Client, customer: Customer, matches: list[MatchResult]
+) -> list[MatchResult]:
+    """既存シートと案件URLで照合し、まだ書き込まれていない新規分だけを返す
+    (書き込みは行わない)。
+
+    LLM関連性判定(modules/llm_judge.py)は新規分だけに適用したいため、
+    「新規判定」と「シート書き込み」を分離してある。match_customer が返す
+    候補には既にシートに書き込み済みの過去案件も含まれており(スコア上位
+    max_recommendations_per_run件を毎回返す設計のため)、判定をここより前で
+    行うと配信済みの過去案件まで毎回LLMに判定させてしまい、API呼び出しが
+    無駄になる(結果の書き込み先も無い)。
+    """
+    sh = gc.open_by_key(customer.output_sheet_id)
+    ws = sh.worksheet(RECOMMEND_TAB)
+    existing = _existing_urls(ws)
+    return [m for m in matches if m.listing.dedup_key not in existing]
+
+
+def write_matches(gc: gspread.Client, customer: Customer, new_matches: list[MatchResult]) -> None:
+    """新規判定済みのmatchesを顧客専用シートに書き込む。"""
+    if not new_matches:
+        return
+    sh = gc.open_by_key(customer.output_sheet_id)
+    ws = sh.worksheet(RECOMMEND_TAB)
+    rows = [
+        [
+            m.listing.project_name,
+            m.listing.organization_name or "",
+            m.listing.cft_issue_date or "",
+            _resolve_deadline(m),
+            _resolve_price(m),
+            m.listing.dedup_key,
+            m.score,
+            " / ".join(_full_reasons(m)),
+            _award_cell(m.price_stats),
+            "未確認",
+        ]
+        for m in new_matches
+    ]
+    ws.append_rows(rows, value_input_option="USER_ENTERED")
+
+
 def append_new_matches(
     gc: gspread.Client,
     customer: Customer,
@@ -83,33 +152,14 @@ def append_new_matches(
 ) -> list[MatchResult]:
     """マッチ結果を顧客専用シートに追記する。案件URLで重複チェックし、新規分のみ返す。
 
+    find_new_matches + write_matches の合成(後方互換のため維持。LLM判定を
+    間に挟みたい新しい呼び出し元は main.py のようにこの2関数を直接使う)。
     dry_run=True のときは重複チェックまで行い、シートへの追記は行わない
     (本番と同じ新着判定の結果だけを返す)。
     """
-    sh = gc.open_by_key(customer.output_sheet_id)
-    ws = sh.worksheet(RECOMMEND_TAB)
-    existing = _existing_urls(ws)
-
-    new_matches = [m for m in matches if m.listing.dedup_key not in existing]
-    if not new_matches or dry_run:
-        return new_matches
-
-    rows = [
-        [
-            m.listing.project_name,
-            m.listing.organization_name or "",
-            m.listing.cft_issue_date or "",
-            m.listing.period_end_time or "",
-            _price_display(m),
-            m.listing.dedup_key,
-            m.score,
-            " / ".join(m.reasons),
-            _award_cell(m.price_stats),
-            "未確認",
-        ]
-        for m in new_matches
-    ]
-    ws.append_rows(rows, value_input_option="USER_ENTERED")
+    new_matches = find_new_matches(gc, customer, matches)
+    if not dry_run:
+        write_matches(gc, customer, new_matches)
     return new_matches
 
 
@@ -216,8 +266,8 @@ def _render_email_body(customer: Customer, matches: list[MatchResult], settings:
         listing_lines.append(
             f"{i}. {listing.project_name}\n"
             f"   発注機関: {listing.organization_name or '不明'}\n"
-            f"   締切日時: {listing.period_end_time or '要確認'}\n"
-            f"   予定価格: {_price_display(m)}\n"
+            f"   締切日時: {_resolve_deadline(m)}\n"
+            f"   予定価格: {_resolve_price(m)}\n"
             f"   マッチ度: {m.score}点\n"
             f"   案件URL: {listing.dedup_key}\n"
             f"{_award_email_lines(m.price_stats)}"

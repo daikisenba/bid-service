@@ -3,7 +3,9 @@
 処理フロー:
 1. 顧客マスタから status=active の顧客一覧を取得する(不正・空プロファイルはスキップ)
 2. kkj.go.jp APIで案件プールを1回だけ取得する(顧客ごとに探索し直さない)
-3. 顧客ごとにマッチング→重複チェック付きでシート追記→レコメンドメール送信
+3. 顧客ごとにマッチング→新規判定→LLM関連性判定(除外キーワードのハード除外は
+   2026-09-21に撤廃し、最終判断はLLMに委ねる。呼び出し失敗時はfail-openで
+   除外しない)→シート追記→レコメンドメール送信
    (新着0件の日も「新着なし」を送る。何日も無音だと配信停止と誤解されるため。
    ただし顧客マスタの「最終送信日」がJST基準の本日と一致する顧客はスキップする
    =1顧客1日1通。スケジュール実行の遅延で同日中に複数回トリガーされる・
@@ -23,14 +25,16 @@ from modules.awards import attach_price_stats, fetch_awards
 from modules.customer import load_active_customers
 from modules.delivery import (
     already_sent_today,
-    append_new_matches,
     build_recommend_email,
     check_mail_auth,
+    find_new_matches,
     record_sent_date,
     send_recommend_email,
     today_jst,
     write_admin_summary,
+    write_matches,
 )
+from modules.llm_judge import judge_relevance
 from modules.matching import match_customer
 from modules.models import CustomerError
 from modules.search import fetch_candidate_pool
@@ -150,10 +154,25 @@ def run(settings_path: str = "config/settings.yaml", *, dry_run: bool = False) -
             matches = match_customer(customer, candidate_pool, settings)
             if award_records is not None:
                 attach_price_stats(customer, matches, award_records)
-            new_matches = append_new_matches(gc, customer, matches, settings, dry_run=dry_run)
+
+            # 新規判定(まだシートに無いもの)だけをLLM判定にかける。配信済みの
+            # 過去案件を毎回LLMに判定させるのは無駄(結果の書き込み先も無い)なため、
+            # 「新規判定」と「シート書き込み」を分離してある(delivery.py参照)。
+            new_matches = find_new_matches(gc, customer, matches)
+            try:
+                judge_relevance(customer, new_matches, settings)
+            except Exception as exc:  # noqa: BLE001 - 1顧客のLLM判定失敗で全体を止めない
+                logger.warning("顧客 %s: LLM関連性判定でエラー: %s", customer.customer_id, exc)
+            # llm_relevant is False の候補だけ除外する。None(未判定/失敗)は
+            # fail-openで通す(judge_relevance自体も内部でfail-openだが、
+            # プロンプト構築時の想定外エラー等まで含めて二重に防御する)。
+            new_matches = [m for m in new_matches if m.llm_relevant is not False]
+
             # シートに追記された時点でカウントする。この後のメール送信が失敗しても
             # 行は既に書かれているため、サマリの総マッチ件数から漏らさない
             total_matches += len(new_matches)
+            if not dry_run:
+                write_matches(gc, customer, new_matches)
 
             today = today_jst()
             # 1顧客1日1通に制限する。スケジュール実行の遅延で同日中に複数回

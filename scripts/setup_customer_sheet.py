@@ -72,6 +72,9 @@ _PROFILE_HEADERS = [
     "予定価格上限",
     "発注機関の種別",
     "資格等級",
+    # 自由記述の事業内容(1段落程度)。LLM関連性判定(modules/llm_judge.py)の
+    # プロンプトに渡す文脈情報。空でもkeywordsだけで動く(2026-09-21導入)。
+    "事業内容",
 ]
 _ADMIN_LOG_HEADERS = ["実行日時", "処理顧客数", "スキップ顧客数", "総マッチ件数", "エラー件数", "詳細"]
 
@@ -94,6 +97,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--price-max", default="")
     parser.add_argument("--organization-types", default="", help="カンマ区切り: 国/都道府県/市区町村/独法")
     parser.add_argument("--qualification-grades", default="", help="カンマ区切り: A/B/C/D")
+    parser.add_argument(
+        "--business-description", default="", help="自由記述の事業内容(任意。LLM判定の精度向上に使う)"
+    )
     parser.add_argument("--contract-start", default="")
     parser.add_argument("--next-billing-date", default="")
     return parser.parse_args()
@@ -159,6 +165,7 @@ def _append_master_row(gc: gspread.Client, settings, args: argparse.Namespace) -
             args.price_max,
             args.organization_types,
             args.qualification_grades,
+            args.business_description,
         ],
         value_input_option="USER_ENTERED",
     )

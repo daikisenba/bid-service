@@ -14,8 +14,10 @@ from modules.delivery import (
     RECOMMEND_TAB,
     append_new_matches,
     check_mail_auth,
+    find_new_matches,
     send_recommend_email,
     write_admin_summary,
+    write_matches,
 )
 from modules.models import (
     BidListing,
@@ -415,3 +417,102 @@ def test_cc_emails_ignored_in_admin_confirmation_mode(settings):
 
     msg = _sent_headers(service)
     assert msg["Cc"] is None
+
+
+def test_find_new_matches_does_not_write(fake_gc, settings):
+    """find_new_matches は新規判定のみ行い、シートには書き込まない
+    (LLM判定を挟むための分離。main.py参照)。"""
+    customer = _customer()
+    new = find_new_matches(fake_gc, customer, [_match()])
+    assert len(new) == 1
+
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet("レコメンド案件")
+    assert ws.rows == []
+
+
+def test_write_matches_writes_row(fake_gc, settings):
+    customer = _customer()
+    new = find_new_matches(fake_gc, customer, [_match()])
+    write_matches(fake_gc, customer, new)
+
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet("レコメンド案件")
+    assert len(ws.rows) == 1
+    assert ws.rows[0][0] == "消耗品の購入"
+    assert ws.rows[0][STATUS_COL_INDEX] == "未確認"
+
+
+def test_write_matches_noop_on_empty_list(fake_gc, settings):
+    customer = _customer()
+    write_matches(fake_gc, customer, [])
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet("レコメンド案件")
+    assert ws.rows == []
+
+
+def test_append_new_matches_is_find_and_write_composed(fake_gc, settings):
+    """append_new_matches は find_new_matches + write_matches の合成(後方互換)。
+    別シートで、append_new_matches 経由でも find_new_matches+write_matches と
+    同じ結果(新規判定・シート書き込み)になることを確認する。"""
+    customer = _customer(output_sheet_id="SHEET_C002")
+    via_append = append_new_matches(fake_gc, customer, [_match(url="https://example.jp/2")], settings)
+    assert len(via_append) == 1
+    ws = fake_gc.spreadsheets["SHEET_C002"].worksheet("レコメンド案件")
+    assert len(ws.rows) == 1
+    assert ws.rows[0][0] == "消耗品の購入"
+
+
+def test_resolve_deadline_prefers_api_value_over_llm(settings):
+    from modules.delivery import _resolve_deadline
+
+    m = _match()
+    m.listing.period_end_time = "2026-10-01T17:00"
+    m.llm_deadline = "2026-10-05"
+    assert _resolve_deadline(m) == "2026-10-01T17:00"
+
+
+def test_resolve_deadline_falls_back_to_llm_when_api_empty(settings):
+    from modules.delivery import _resolve_deadline
+
+    m = _match()
+    m.listing.period_end_time = None
+    m.llm_deadline = "2026-10-05"
+    assert _resolve_deadline(m) == "2026-10-05(AI抽出・要確認)"
+
+
+def test_resolve_deadline_returns_kakunin_when_both_empty(settings):
+    from modules.delivery import _resolve_deadline
+
+    m = _match()
+    m.listing.period_end_time = None
+    m.llm_deadline = None
+    assert _resolve_deadline(m) == "要確認"
+
+
+def test_resolve_price_prefers_regex_over_llm(settings):
+    from modules.delivery import _resolve_price
+
+    m = _match()
+    m.estimated_price = 120000
+    m.llm_estimated_price = 999999
+    assert _resolve_price(m) == "¥120,000"
+
+
+def test_resolve_price_falls_back_to_llm_when_regex_failed(settings):
+    from modules.delivery import _resolve_price
+
+    m = _match()
+    m.estimated_price = None
+    m.llm_estimated_price = 500000
+    assert _resolve_price(m) == "¥500,000(AI抽出・要確認)"
+
+
+def test_reasons_include_llm_reason_when_present(fake_gc, settings):
+    customer = _customer()
+    m = _match()
+    m.reasons = ["キーワード一致(案件名): 消耗品"]
+    m.llm_reason = "文具の物品購入案件のため関連あり"
+    new = find_new_matches(fake_gc, customer, [m])
+    write_matches(fake_gc, customer, new)
+
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet("レコメンド案件")
+    reasons_cell = ws.rows[0][7]  # レコメンド理由列
+    assert "AI判定: 文具の物品購入案件のため関連あり" in reasons_cell

@@ -45,6 +45,7 @@ def test_append_master_row_adds_customer_and_profile(settings):
         price_max="",
         organization_types="",
         qualification_grades="",
+        business_description="",
         contract_start="2026-07-10",
         next_billing_date="2026-08-10",
     )
@@ -57,6 +58,9 @@ def test_append_master_row_adds_customer_and_profile(settings):
     assert master_rows[0][8] == "SHEET_C004"
     assert master_rows[0][9] == ""  # 最終送信日(未送信)
     assert master_rows[0][10] == ""  # Cc(未指定)
+
+    profile_rows = gc.spreadsheets[MASTER_ID].worksheet("条件プロファイル").rows
+    assert profile_rows[0][8] == ""  # 事業内容(未設定)
 
 
 def test_append_master_row_records_cc_emails(settings):
@@ -77,6 +81,7 @@ def test_append_master_row_records_cc_emails(settings):
         price_max="",
         organization_types="",
         qualification_grades="",
+        business_description="防災用品のレンタル・販売",
         contract_start="2026-07-10",
         next_billing_date="2026-08-10",
     )
@@ -90,6 +95,7 @@ def test_append_master_row_records_cc_emails(settings):
     assert len(profile_rows) == 1
     assert profile_rows[0][0] == "C004"
     assert profile_rows[0][1] == "消耗品"
+    assert profile_rows[0][8] == "防災用品のレンタル・販売"
 
 
 def test_init_recommend_sheet_writes_headers(settings):

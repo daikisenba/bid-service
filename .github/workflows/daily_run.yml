@@ -53,6 +53,7 @@ jobs:
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.mail_check != true }}
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python main.py --config config/settings.yaml
 
       - name: メール送信チェックのみ実行

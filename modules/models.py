@@ -39,6 +39,10 @@ class CustomerProfile(BaseModel):
     price_max: int | None = None
     organization_types: list[str] = Field(default_factory=list)
     qualification_grades: list[str] = Field(default_factory=list)
+    # 自由記述の事業内容(1段落程度)。keywordsだけでは伝わらない文脈を
+    # LLM判定(modules/llm_judge.py)のプロンプトに渡すために使う。
+    # 空文字でもkeywordsだけで動く(後方互換、未設定の既存顧客も壊れない)。
+    business_description: str = ""
 
     _split_fields = field_validator(
         "keywords",
@@ -153,6 +157,15 @@ class MatchResult(BaseModel):
     # 参考落札相場(フェーズ2 ステップ①)。None は相場照合を行わなかったことを表し、
     # count=0 は照合したが同種案件が見つからなかったことを表す(両者は区別する)。
     price_stats: PriceStats | None = None
+    # 除外キーワードに一致した語(案件名のみ対象)。2026-09-21〜、ハード除外はせず
+    # ここに記録してLLM判定(modules/llm_judge.py)のシグナルとして渡す。
+    exclude_keywords_matched: list[str] = Field(default_factory=list)
+    # LLM関連性判定。None=未判定/判定失敗(fail-open、この状態では除外しない)。
+    llm_relevant: bool | None = None
+    llm_reason: str | None = None
+    # 公告文からLLMが抽出した締切日・予定価格(API構造化値が取れない案件の補完用)。
+    llm_deadline: str | None = None
+    llm_estimated_price: int | None = None
 
 
 class SkipReason(BaseModel):
