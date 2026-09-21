@@ -296,3 +296,63 @@ def test_llm_relevant_false_excludes_from_sheet_and_email(monkeypatch, settings,
     sent = _GMAIL["service"].store.get("sent", [])
     subjects = [_sent_subject(m) for m in sent]
     assert any(s.endswith("サンプル商事株式会社様 - 本日は新着なし") for s in subjects)
+
+
+def test_run_deadline_reminder_sends_to_customer_with_upcoming_deadline(monkeypatch, settings, fake_gc):
+    from datetime import date
+
+    monkeypatch.setattr("main.load_settings", lambda path: settings)
+    monkeypatch.setattr("main.build_gspread_client", lambda: fake_gc)
+    service = FakeGmailService()
+    monkeypatch.setattr("main.build_gmail_service", lambda sender: service)
+    monkeypatch.setattr("main.date", type("_D", (), {"today": staticmethod(lambda: date(2026, 9, 21))}))
+
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet("レコメンド案件")
+    # 案件名,発注機関,公告日,締切日,予定価格,案件URL,マッチ度スコア,レコメンド理由,参考落札相場,ステータス
+    ws.rows.append(["備蓄品の購入", "某市", "", "2026-09-23", "要確認", "https://example.jp/1", 100, "ok", "", "未確認"])
+
+    exit_code = main.run_deadline_reminder()
+
+    assert exit_code == 0
+    sent = service.store.get("sent", [])
+    assert len(sent) == 1
+
+
+def test_run_deadline_reminder_skips_customers_without_upcoming_deadlines(monkeypatch, settings, fake_gc):
+    from datetime import date
+
+    monkeypatch.setattr("main.load_settings", lambda path: settings)
+    monkeypatch.setattr("main.build_gspread_client", lambda: fake_gc)
+    service = FakeGmailService()
+    monkeypatch.setattr("main.build_gmail_service", lambda sender: service)
+    monkeypatch.setattr("main.date", type("_D", (), {"today": staticmethod(lambda: date(2026, 9, 21))}))
+
+    exit_code = main.run_deadline_reminder()
+
+    assert exit_code == 0
+    assert service.store.get("sent", []) == []
+
+
+def test_run_deadline_reminder_dry_run_does_not_send(monkeypatch, settings, fake_gc):
+    from datetime import date
+
+    monkeypatch.setattr("main.load_settings", lambda path: settings)
+    monkeypatch.setattr("main.build_gspread_client", lambda: fake_gc)
+    monkeypatch.setattr("main.date", type("_D", (), {"today": staticmethod(lambda: date(2026, 9, 21))}))
+
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet("レコメンド案件")
+    ws.rows.append(["備蓄品の購入", "某市", "", "2026-09-23", "要確認", "https://example.jp/1", 100, "ok", "", "未確認"])
+
+    exit_code = main.run_deadline_reminder(dry_run=True)
+    assert exit_code == 0
+    # dry-runではbuild_gmail_serviceが呼ばれないことを別途確認(モック未設定でも動く)
+
+
+def test_cli_remind_deadline_flag_routes_to_run_deadline_reminder(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["main.py", "--remind-deadline"])
+    called = []
+    monkeypatch.setattr("main.run_deadline_reminder", lambda config, dry_run=False: called.append((config, dry_run)) or 0)
+    monkeypatch.setattr("main.run", lambda config, dry_run=False: (_ for _ in ()).throw(AssertionError("runが呼ばれてはいけない")))
+
+    assert main.main() == 0
+    assert called == [("config/settings.yaml", False)]

@@ -12,23 +12,29 @@
    手動で追い実行する、といった場合の二重送信を防ぐ。
    1顧客の処理で例外が発生しても、残りの顧客の処理は継続する)
 4. 実行結果サマリを顧客マスタの実行ログタブに記録する
+
+--remind-deadline を付けると、上記とは別に締切間近(3日以内)の未確認案件を
+顧客ごとにリマインドする(run_deadline_reminder。1顧客1日1通の制限は掛けない)。
 """
 from __future__ import annotations
 
 import argparse
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from modules.auth import build_gmail_service, build_gspread_client
 from modules.awards import attach_price_stats, fetch_awards
 from modules.customer import load_active_customers
 from modules.delivery import (
     already_sent_today,
+    build_deadline_reminder_email,
     build_recommend_email,
     check_mail_auth,
     find_new_matches,
+    find_upcoming_deadlines,
     record_sent_date,
+    send_deadline_reminder_email,
     send_recommend_email,
     today_jst,
     write_admin_summary,
@@ -60,6 +66,61 @@ def run_mail_check(settings_path: str = "config/settings.yaml") -> int:
         return 1
     logger.info("メール送信チェック: 成功(%s として Gmail API で送信できます)", settings.email.from_address)
     return 0
+
+
+def _print_dry_run_reminder(customer, upcoming, settings) -> None:
+    """dry-runで、本番と同じ組み立て経路で作った締切リマインドメールを表示する。"""
+    msg = build_deadline_reminder_email(customer, upcoming, settings)
+    body = msg.get_payload(0).get_payload(decode=True).decode("utf-8")
+    print("\n" + "=" * 72)
+    print(f"To:      {msg['To']}")
+    print(f"Cc:      {msg['Cc'] or '(なし)'}")
+    print(f"Bcc:     {msg['Bcc'] or '(なし)'}")
+    print(f"From:    {msg['From']}")
+    print(f"Subject: {msg['Subject']}")
+    print("-" * 72)
+    print(body)
+    print("=" * 72 + "\n")
+
+
+def run_deadline_reminder(settings_path: str = "config/settings.yaml", *, dry_run: bool = False) -> int:
+    """締切が近い(既定3日以内)未確認案件を顧客ごとに抽出し、リマインドメールを送る。
+
+    通常のrun()(新着レコメンド)とはトリガー・対象が異なる別処理のため、
+    run_mail_check()と同様の目的別サブコマンド関数としてここに並置する。
+    1顧客1日1通の制限(already_sent_today)は掛けない(締切リマインドは
+    「念押し」の性質上、対象がある限り毎日届く仕様。modules/delivery.py参照)。
+    """
+    settings = load_settings(settings_path)
+    gc = build_gspread_client()
+    gmail_service = None if dry_run else build_gmail_service(settings.email.from_address)
+
+    load_result = load_active_customers(gc, settings)
+    for s in load_result.skipped:
+        logger.warning("顧客 %s をスキップしました: %s", s.customer_id, s.reason)
+
+    today = date.today()
+    errors = 0
+    for customer in load_result.customers:
+        try:
+            upcoming = find_upcoming_deadlines(gc, customer, today=today)
+            if not upcoming:
+                continue
+            if dry_run:
+                _print_dry_run_reminder(customer, upcoming, settings)
+            else:
+                send_deadline_reminder_email(customer, upcoming, settings, gmail_service)
+            logger.info(
+                "顧客 %s (%s): 締切間近の案件%d件をリマインドしました",
+                customer.customer_id,
+                customer.company_name,
+                len(upcoming),
+            )
+        except Exception:  # noqa: BLE001 - 1顧客の失敗で全体を止めない
+            logger.exception("顧客 %s の締切リマインドでエラーが発生しました", customer.customer_id)
+            errors += 1
+
+    return 1 if errors else 0
 
 
 def _print_dry_run_email(customer, matches, settings) -> None:
@@ -238,9 +299,16 @@ def main() -> int:
         action="store_true",
         help="送信されるメールを表示するだけで、シート追記・メール送信・実行ログ記録を行わない",
     )
+    parser.add_argument(
+        "--remind-deadline",
+        action="store_true",
+        help="締切が近い未確認案件のリマインドメールを送信する(通常のレコメンド配信とは別処理)",
+    )
     args = parser.parse_args()
     if args.mail_check:
         return run_mail_check(args.config)
+    if args.remind_deadline:
+        return run_deadline_reminder(args.config, dry_run=args.dry_run)
     return run(args.config, dry_run=args.dry_run)
 
 

@@ -56,6 +56,16 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python main.py --config config/settings.yaml
 
+      # 通常のレコメンド配信の直後に、締切間近(3日以内)の未確認案件をリマインドする。
+      # 同一ジョブ内の別ステップにしているのは、認証情報・顧客マスタ読み込みを
+      # 使い回せて軽量(シート読み取りのみ)なため、別ワークフロー・別cronにする
+      # 運用上のメリットが薄いと判断したため。
+      - name: 締切リマインド送信
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mail_check != true }}
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: python main.py --config config/settings.yaml --remind-deadline
+
       - name: メール送信チェックのみ実行
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mail_check == true }}
         env:

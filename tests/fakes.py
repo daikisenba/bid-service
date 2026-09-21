@@ -23,6 +23,9 @@ class FakeWorksheet:
             return [dict(zip(self.header, [str(v) for v in row])) for row in self.rows]
         return [dict(zip(self.header, row)) for row in self.rows]
 
+    def get_all_values(self) -> list[list[object]]:
+        return [self.header] + [list(row) for row in self.rows]
+
     def col_values(self, col: int) -> list[str]:
         values = [self.header[col - 1]]
         for row in self.rows:

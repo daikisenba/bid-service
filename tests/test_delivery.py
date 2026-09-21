@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import email
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from email.header import decode_header, make_header
 
 import httplib2
@@ -13,8 +13,11 @@ from googleapiclient.errors import HttpError
 from modules.delivery import (
     RECOMMEND_TAB,
     append_new_matches,
+    build_deadline_reminder_email,
     check_mail_auth,
     find_new_matches,
+    find_upcoming_deadlines,
+    send_deadline_reminder_email,
     send_recommend_email,
     write_admin_summary,
     write_matches,
@@ -516,3 +519,99 @@ def test_reasons_include_llm_reason_when_present(fake_gc, settings):
     ws = fake_gc.spreadsheets["SHEET_C001"].worksheet("レコメンド案件")
     reasons_cell = ws.rows[0][7]  # レコメンド理由列
     assert "AI判定: 文具の物品購入案件のため関連あり" in reasons_cell
+
+
+def _reminder_row(project_name, org, deadline, status, url="https://example.jp/x"):
+    # RECOMMEND_HEADERS: 案件名,発注機関,公告日,締切日,予定価格,案件URL,マッチ度スコア,レコメンド理由,参考落札相場,ステータス
+    return [project_name, org, "", deadline, "要確認", url, 100, "ok", "", status]
+
+
+def test_find_upcoming_deadlines_within_threshold(fake_gc, settings):
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet(RECOMMEND_TAB)
+    ws.rows.append(_reminder_row("3日後締切の案件", "某省", "2026-09-24", "未確認"))
+
+    customer = _customer()
+    result = find_upcoming_deadlines(fake_gc, customer, today=date(2026, 9, 21))
+
+    assert len(result) == 1
+    assert result[0].project_name == "3日後締切の案件"
+    assert result[0].deadline == date(2026, 9, 24)
+
+
+def test_find_upcoming_deadlines_excludes_beyond_threshold(fake_gc, settings):
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet(RECOMMEND_TAB)
+    ws.rows.append(_reminder_row("4日後締切の案件", "某省", "2026-09-25", "未確認"))
+
+    customer = _customer()
+    result = find_upcoming_deadlines(fake_gc, customer, today=date(2026, 9, 21))
+    assert result == []
+
+
+def test_find_upcoming_deadlines_excludes_past_deadline(fake_gc, settings):
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet(RECOMMEND_TAB)
+    ws.rows.append(_reminder_row("締切済みの案件", "某省", "2026-09-20", "未確認"))
+
+    customer = _customer()
+    result = find_upcoming_deadlines(fake_gc, customer, today=date(2026, 9, 21))
+    assert result == []
+
+
+def test_find_upcoming_deadlines_excludes_non_unconfirmed_status(fake_gc, settings):
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet(RECOMMEND_TAB)
+    ws.rows.append(_reminder_row("検討中の案件", "某省", "2026-09-22", "検討中"))
+
+    customer = _customer()
+    result = find_upcoming_deadlines(fake_gc, customer, today=date(2026, 9, 21))
+    assert result == []
+
+
+def test_find_upcoming_deadlines_excludes_unparseable_deadline(fake_gc, settings):
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet(RECOMMEND_TAB)
+    ws.rows.append(_reminder_row("締切不明の案件", "某省", "要確認", "未確認"))
+
+    customer = _customer()
+    result = find_upcoming_deadlines(fake_gc, customer, today=date(2026, 9, 21))
+    assert result == []
+
+
+def test_find_upcoming_deadlines_parses_llm_suffix_format(fake_gc, settings):
+    """LLM抽出値は 'YYYY-MM-DD(AI抽出・要確認)' サフィックス付きで書かれる。
+    先頭の日付部分だけを正しくパースできること。"""
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet(RECOMMEND_TAB)
+    ws.rows.append(_reminder_row("AI抽出締切の案件", "某省", "2026-09-23(AI抽出・要確認)", "未確認"))
+
+    customer = _customer()
+    result = find_upcoming_deadlines(fake_gc, customer, today=date(2026, 9, 21))
+    assert len(result) == 1
+    assert result[0].deadline == date(2026, 9, 23)
+
+
+def test_find_upcoming_deadlines_sorted_by_deadline_ascending(fake_gc, settings):
+    ws = fake_gc.spreadsheets["SHEET_C001"].worksheet(RECOMMEND_TAB)
+    ws.rows.append(_reminder_row("遠い案件", "某省", "2026-09-24", "未確認", url="https://example.jp/far"))
+    ws.rows.append(_reminder_row("近い案件", "某省", "2026-09-22", "未確認", url="https://example.jp/near"))
+
+    customer = _customer()
+    result = find_upcoming_deadlines(fake_gc, customer, today=date(2026, 9, 21))
+    assert [r.project_name for r in result] == ["近い案件", "遠い案件"]
+
+
+def test_deadline_reminder_email_body_includes_days_left(settings):
+    from modules.delivery import UpcomingDeadline
+
+    customer = _customer()
+    upcoming = [UpcomingDeadline("備蓄品の購入", "某市", date(2026, 9, 24), "https://example.jp/1")]
+    msg = build_deadline_reminder_email(customer, upcoming, settings)
+    body = msg.get_payload(0).get_payload(decode=True).decode("utf-8")
+    assert "備蓄品の購入" in body
+    assert "締切間近" in str(msg["Subject"])
+
+
+def test_send_deadline_reminder_email_uses_gmail_send(settings):
+    from modules.delivery import UpcomingDeadline
+
+    customer = _customer()
+    upcoming = [UpcomingDeadline("備蓄品の購入", "某市", date(2026, 9, 24), "https://example.jp/1")]
+    service = FakeGmailService()
+    send_deadline_reminder_email(customer, upcoming, settings, service)
+    assert len(service.store["sent"]) == 1

@@ -15,7 +15,8 @@ Google Workspaceが2025年にSMTPの基本認証を廃止したため、SMTP+ア
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import date, datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -48,6 +49,9 @@ _URL_COLUMN = RECOMMEND_HEADERS.index("案件URL") + 1
 
 _TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "recommend_mail.md"
 _EMPTY_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "recommend_mail_empty.md"
+_DEADLINE_REMINDER_TEMPLATE_PATH = (
+    Path(__file__).resolve().parent.parent / "templates" / "deadline_reminder_mail.md"
+)
 
 
 def _resolve_deadline(match: MatchResult) -> str:
@@ -199,6 +203,81 @@ def record_sent_date(gc: gspread.Client, customer: Customer, settings: Settings,
             return
 
 
+_DEADLINE_REMINDER_THRESHOLD_DAYS = 3
+_DEADLINE_DATE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
+_UNCONFIRMED_STATUS = "未確認"
+
+
+class UpcomingDeadline:
+    """締切リマインド対象の1件。シートの行データをそのまま保持する軽量な入れ物。"""
+
+    def __init__(self, project_name: str, organization_name: str, deadline: date, dedup_key: str):
+        self.project_name = project_name
+        self.organization_name = organization_name
+        self.deadline = deadline
+        self.dedup_key = dedup_key
+
+
+def find_upcoming_deadlines(
+    gc: gspread.Client,
+    customer: Customer,
+    *,
+    today: date,
+    threshold_days: int = _DEADLINE_REMINDER_THRESHOLD_DAYS,
+) -> list[UpcomingDeadline]:
+    """顧客専用シートから、締切日が threshold_days 以内かつステータス「未確認」の
+    行を抽出する(締切リマインド用)。
+
+    締切日列は _resolve_deadline が書いた自由記述の文字列
+    (YYYY-MM-DD、"YYYY-MM-DD(AI抽出・要確認)" サフィックス付き、または「要確認」)
+    のため、先頭がYYYY-MM-DD形式でパースできる行だけを対象とする。パースできない
+    行(「要確認」等)は誤った日付で誤リマインドするより、対象外にする方が安全
+    という判断。
+
+    実測(2026-09-21時点、本番シート): API構造化値(period_end_time)は697件中
+    697件が空欄で、締切日欄はほぼ全てLLM抽出値(またはそれも取れず「要確認」)に
+    依存している。LLM関連性判定(modules/llm_judge.py)が実際に機能して初めて
+    この関数の対象が現れる。
+    """
+    sh = gc.open_by_key(customer.output_sheet_id)
+    ws = sh.worksheet(RECOMMEND_TAB)
+    rows = ws.get_all_values()
+    if not rows:
+        return []
+    header = rows[0]
+    name_col = header.index("案件名")
+    org_col = header.index("発注機関")
+    deadline_col = header.index("締切日")
+    url_col = header.index("案件URL")
+    status_col = header.index("ステータス")
+
+    upper_bound = today + timedelta(days=threshold_days)
+    upcoming: list[UpcomingDeadline] = []
+    for row in rows[1:]:
+        if len(row) <= status_col:
+            continue
+        if row[status_col] != _UNCONFIRMED_STATUS:
+            continue
+        m = _DEADLINE_DATE_RE.match(row[deadline_col] if len(row) > deadline_col else "")
+        if not m:
+            continue
+        try:
+            deadline = date.fromisoformat(m.group(1))
+        except ValueError:
+            continue
+        if today <= deadline <= upper_bound:
+            upcoming.append(
+                UpcomingDeadline(
+                    project_name=row[name_col],
+                    organization_name=row[org_col] if len(row) > org_col else "",
+                    deadline=deadline,
+                    dedup_key=row[url_col] if len(row) > url_col else "",
+                )
+            )
+    upcoming.sort(key=lambda u: u.deadline)
+    return upcoming
+
+
 def _award_email_lines(stats: PriceStats | None) -> str:
     """メール用の参考落札相場ブロック。相場照合なし(None)または0件のときは空文字。"""
     if stats is None or stats.count == 0:
@@ -330,13 +409,8 @@ def check_mail_auth(gmail_service, settings: Settings) -> None:
     _gmail_send(gmail_service, msg)
 
 
-def build_recommend_email(
-    customer: Customer, matches: list[MatchResult], settings: Settings
-) -> MIMEMultipart:
-    """送信するレコメンドメールを組み立てて返す(送信はしない)。
-
-    送信経路(send_recommend_email)と事前確認(--dry-run)が同じ関数で宛先・本文を
-    組み立てるようにしてある。プレビューと本番で中身がズレると確認の意味がないため。
+def _build_email(customer: Customer, settings: Settings, subject: str, body: str) -> MIMEMultipart:
+    """宛先決定ロジック(レコメンドメール・締切リマインドメールで共通)。
 
     settings.email.auto_send_to_customer が
       False(既定): 管理者宛にのみ送る。管理者が内容を確認して顧客へ転送する。
@@ -346,13 +420,6 @@ def build_recommend_email(
                    customer.cc_emails があれば、この場合のみCcとして追加する
                    (管理者確認モードでは、管理者が転送時に自分で宛先を判断するため付けない)。
     """
-    body = _render_email_body(customer, matches, settings)
-    subject = (
-        f"【入札案件レコメンド】{customer.company_name}様 - {len(matches)}件"
-        if matches
-        else f"【入札案件レコメンド】{customer.company_name}様 - 本日は新着なし"
-    )
-
     msg = MIMEMultipart()
     msg["Subject"] = subject
     msg["From"] = settings.email.from_address
@@ -380,6 +447,24 @@ def build_recommend_email(
     return msg
 
 
+def build_recommend_email(
+    customer: Customer, matches: list[MatchResult], settings: Settings
+) -> MIMEMultipart:
+    """送信するレコメンドメールを組み立てて返す(送信はしない)。
+
+    送信経路(send_recommend_email)と事前確認(--dry-run)が同じ関数で宛先・本文を
+    組み立てるようにしてある。プレビューと本番で中身がズレると確認の意味がないため。
+    宛先決定ロジックは _build_email 参照。
+    """
+    body = _render_email_body(customer, matches, settings)
+    subject = (
+        f"【入札案件レコメンド】{customer.company_name}様 - {len(matches)}件"
+        if matches
+        else f"【入札案件レコメンド】{customer.company_name}様 - 本日は新着なし"
+    )
+    return _build_email(customer, settings, subject, body)
+
+
 def send_recommend_email(
     customer: Customer,
     matches: list[MatchResult],
@@ -388,6 +473,53 @@ def send_recommend_email(
 ) -> None:
     """レコメンドメールを生成してGmail APIで送信する(宛先の決定は build_recommend_email)。"""
     _gmail_send(gmail_service, build_recommend_email(customer, matches, settings))
+
+
+def _render_deadline_reminder_body(
+    customer: Customer, upcoming: list[UpcomingDeadline], settings: Settings
+) -> str:
+    template = _DEADLINE_REMINDER_TEMPLATE_PATH.read_text(encoding="utf-8")
+    lines = []
+    for i, u in enumerate(upcoming, start=1):
+        days_left = (u.deadline - date.today()).days
+        lines.append(
+            f"{i}. {u.project_name}\n"
+            f"   発注機関: {u.organization_name or '不明'}\n"
+            f"   締切日: {u.deadline.isoformat()}(あと{days_left}日)\n"
+            f"   案件URL: {u.dedup_key}\n"
+        )
+    return template.format(
+        company_name=settings.company.name,
+        customer_company_name=customer.company_name,
+        count=len(upcoming),
+        listings="\n".join(lines),
+        footer=_footer_lines(customer, settings),
+    )
+
+
+def build_deadline_reminder_email(
+    customer: Customer, upcoming: list[UpcomingDeadline], settings: Settings
+) -> MIMEMultipart:
+    """締切リマインドメールを組み立てて返す(送信はしない)。
+
+    毎朝のレコメンドメールとは別目的・別トリガーのメールのため、1顧客1日1通の
+    制限(already_sent_today)の対象外。締切3日以内の未確認案件がある限り、
+    日次で「念押し」として届き続ける仕様(1案件1回だけに絞る機構は持たない。
+    止めたい場合は顧客がシートのステータスを更新する既存運用に委ねる)。
+    """
+    body = _render_deadline_reminder_body(customer, upcoming, settings)
+    subject = f"【締切間近】{customer.company_name}様 - {len(upcoming)}件"
+    return _build_email(customer, settings, subject, body)
+
+
+def send_deadline_reminder_email(
+    customer: Customer,
+    upcoming: list[UpcomingDeadline],
+    settings: Settings,
+    gmail_service,
+) -> None:
+    """締切リマインドメールを生成してGmail APIで送信する。"""
+    _gmail_send(gmail_service, build_deadline_reminder_email(customer, upcoming, settings))
 
 
 def write_admin_summary(
