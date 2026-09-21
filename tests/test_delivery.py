@@ -121,7 +121,10 @@ def _customer(output_sheet_id: str = "SHEET_C001", cc_emails: str = "") -> Custo
 def _match(url: str = "https://example.jp/1", score: int = 90, price_stats: PriceStats | None = None) -> MatchResult:
     listing = BidListing(
         result_id="1",
-        key="k1",
+        # dedup_key は常に key を返す仕様(2026-09-21〜)。既存テストは url引数で
+        # 「別の案件」を表現しているため、key もそれに連動させる(固定だと
+        # 異なるurlを渡しても同一案件=同一dedup_keyになってしまう)。
+        key=url,
         external_document_uri=url,
         project_name="消耗品の購入",
         organization_name="某省",

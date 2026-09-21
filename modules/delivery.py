@@ -135,6 +135,11 @@ def write_matches(gc: gspread.Client, customer: Customer, new_matches: list[Matc
             m.listing.cft_issue_date or "",
             _resolve_deadline(m),
             _resolve_price(m),
+            # シートのこの列は重複判定のキーとしても使われる(_existing_urls参照)。
+            # 表示の分かりやすさのために display_url にすると、同一URLを持つ
+            # 別案件が誤って「重複」と判定される元のバグが再発するため、
+            # 必ず一意な dedup_key を保存する(表示上の見やすさはメール本文側で
+            # display_url を使うことで別途改善する)。
             m.listing.dedup_key,
             m.score,
             " / ".join(_full_reasons(m)),
@@ -348,7 +353,7 @@ def _render_email_body(customer: Customer, matches: list[MatchResult], settings:
             f"   締切日時: {_resolve_deadline(m)}\n"
             f"   予定価格: {_resolve_price(m)}\n"
             f"   マッチ度: {m.score}点\n"
-            f"   案件URL: {listing.dedup_key}\n"
+            f"   案件URL: {listing.display_url}\n"
             f"{_award_email_lines(m.price_stats)}"
         )
     body = template.format(

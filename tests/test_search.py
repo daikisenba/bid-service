@@ -41,12 +41,17 @@ def test_parse_response_parses_fields_and_dedup_key():
     assert first.project_name == "消耗品の購入"
     assert first.lg_code == "13"
     assert first.certification == ["C", "D"]
-    assert first.dedup_key == "https://example.jp/1"
+    # dedup_key は常に key(常に一意)。ExternalDocumentURIは発注機関によっては
+    # 個別詳細ページでなく検索トップページ等を指し、複数の別案件が同一URLを
+    # 持つことが実測で判明した(2026-09-21)ため、重複判定には使わない。
+    assert first.dedup_key == "k1"
+    assert first.display_url == "https://example.jp/1"
 
     second = listings[1]
-    # ExternalDocumentURIが無い場合はKeyがdedup_keyのフォールバックになる
+    # ExternalDocumentURIが無い場合はKeyがdisplay_urlのフォールバックになる
     assert second.external_document_uri is None
     assert second.dedup_key == "k2"
+    assert second.display_url == "k2"
 
 
 def test_parse_response_raises_on_error_xml():

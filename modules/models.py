@@ -111,7 +111,27 @@ class BidListing(BaseModel):
 
     @property
     def dedup_key(self) -> str:
-        """顧客シートへの重複書き込みチェックに使うキー(案件URL優先)。"""
+        """顧客シートへの重複書き込みチェック・LLM判定結果の突合に使う一意キー。
+
+        常に key(kkj.go.jp APIが払い出す内部識別子)を使う。2026-09-21実測
+        (候補389件)でkeyの重複はゼロで完全に一意。一方 external_document_uri は
+        発注機関によっては個別の詳細ページではなくp-portal等の検索トップページを
+        指すことがあり、無関係な複数案件が同一URLを持つケースが実測で見つかった
+        (例: 内閣官房の複数案件が全て同じp-portalトップページを指していた)。
+        これを重複キーに使うと、URLが同じというだけで別案件が「配信済み」と
+        誤判定され握りつぶされる不具合になっていた(2026-09-21修正)。
+        表示用のリンクが必要な場合は display_url を使うこと。
+        """
+        return self.key
+
+    @property
+    def display_url(self) -> str:
+        """メール本文・シートに表示する、顧客がクリックする案件詳細リンク。
+
+        可能な限り external_document_uri(発注機関の公告詳細ページ)を優先し、
+        取得できない場合のみ内部識別子(key)にフォールバックする
+        (keyはURLではなくBase64文字列のため、開いても詳細は見られない)。
+        """
         return self.external_document_uri or self.key
 
 

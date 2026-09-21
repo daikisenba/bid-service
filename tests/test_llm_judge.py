@@ -30,8 +30,11 @@ def _customer(business_description: str = "") -> Customer:
 def _match(dedup_key: str = "https://example.jp/1", project_name: str = "防災備蓄倉庫整備業務") -> MatchResult:
     listing = BidListing(
         result_id="1",
-        key="k1",
-        external_document_uri=dedup_key,
+        # dedup_key は常に key を返す仕様(2026-09-21〜)なので、このヘルパーの
+        # dedup_key引数はkeyフィールドにそのまま渡す。external_document_uriは
+        # 別の値(URLの体裁)を持たせ、display_url経由でのみ使われることを示す。
+        key=dedup_key,
+        external_document_uri=f"{dedup_key}-detail",
         project_name=project_name,
         organization_name="某市",
         project_description="防災備蓄用の簡易ベッド・毛布等の購入業務",
